@@ -274,9 +274,7 @@ def generate_meeting_record(
     return normalize_meeting_record(parse_json_response(response.output_text))
 
 
-def template_bytes_from_upload(uploaded_template: Any) -> bytes:
-    if uploaded_template is not None:
-        return uploaded_template.getvalue()
+def template_bytes() -> bytes:
     with open(DEFAULT_TEMPLATE_PATH, "rb") as template_file:
         return template_file.read()
 
@@ -410,11 +408,6 @@ def run_app() -> None:
             placeholder="Anything else the AI should know, like phase, package, contractor names, or purpose of the visit.",
             height=120,
         )
-        uploaded_template = st.file_uploader(
-            "Excel template (optional)",
-            type=["xlsx"],
-            help="Leave this empty to use the SRMD MOM template stored in the repo.",
-        )
 
     with right_col:
         st.subheader("Meeting Notes")
@@ -424,13 +417,13 @@ def run_app() -> None:
             height=420,
         )
 
-    template_ready = uploaded_template is not None or os.path.exists(DEFAULT_TEMPLATE_PATH)
+    template_ready = os.path.exists(DEFAULT_TEMPLATE_PATH)
     generate_disabled = not meeting_notes.strip() or not template_ready
     generate_clicked = st.button("Generate Excel MOM", type="primary", disabled=generate_disabled)
 
     if not template_ready:
         st.warning(
-            f"Template not found at `{DEFAULT_TEMPLATE_PATH}`. Upload the template file above to continue."
+            f"Template not found at `{DEFAULT_TEMPLATE_PATH}`. Add the SRMD MOM template to the repo root to continue."
         )
 
     if generate_clicked:
@@ -447,7 +440,7 @@ def run_app() -> None:
                     notes=meeting_notes,
                     extra_context=extra_context,
                 )
-                generated_workbook = build_workbook(template_bytes_from_upload(uploaded_template), record)
+                generated_workbook = build_workbook(template_bytes(), record)
 
             st.success("Excel MOM generated successfully.")
 
