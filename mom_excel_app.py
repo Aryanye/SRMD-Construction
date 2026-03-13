@@ -385,16 +385,15 @@ def run_app() -> None:
 
     with st.sidebar:
         st.header("AI Settings")
-        api_key = st.text_input(
-            "OpenAI API key",
-            value=get_api_key(),
-            type="password",
-            help="Loads from Streamlit Secrets when deployed, or from your local environment when running locally.",
-        )
+        api_key = get_api_key()
         model = st.selectbox("Model", MODEL_OPTIONS, index=MODEL_OPTIONS.index(DEFAULT_MODEL))
+        if api_key:
+            st.success("OpenAI API key detected from app secrets/environment.")
+        else:
+            st.warning("No OpenAI API key found. The app will use its local fallback parser.")
         st.info(
-            "If the API key is blank, the app still works with a basic local parser, but AI will do a better job "
-            "inferring missing fields and cleaning up discussion points."
+            "This app reads the API key from Streamlit Secrets when deployed, or from the local environment when "
+            "running locally. The key is not shown in the app UI."
         )
 
     left_col, right_col = st.columns([1, 1.2])
