@@ -5,22 +5,21 @@ from dataclasses import dataclass
 from io import BytesIO
 import json
 import os
+from pathlib import Path
 import re
 from typing import Any
 
-from dotenv import load_dotenv
 from openai import OpenAI
 from openpyxl import load_workbook
 from openpyxl.cell.cell import MergedCell
 from openpyxl.styles import Alignment
 import streamlit as st
 
-load_dotenv()
-
 APP_TITLE = "SRMD MOM Generator"
 DEFAULT_MODEL = "gpt-5.1"
 MODEL_OPTIONS = ["gpt-5.1", "gpt-5-mini", "gpt-4.1"]
-DEFAULT_TEMPLATE_PATH = "/Users/aryanshah/Downloads/SRMD MOM Format.xlsx"
+BASE_DIR = Path(__file__).resolve().parent
+DEFAULT_TEMPLATE_PATH = BASE_DIR / "templates" / "SRMD MOM Format.xlsx"
 DISCUSSION_START_ROW = 18
 BASE_DISCUSSION_ROWS = 9
 FOOTER_START_ROW = 27
@@ -64,6 +63,13 @@ def sanitize_text(value: Any, fallback: str) -> str:
 def sanitize_filename(value: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", value.strip())
     return cleaned.strip("._") or "mom_report"
+
+
+def get_api_key() -> str:
+    secret_value = st.secrets.get("OPENAI_API_KEY", "")
+    if secret_value:
+        return str(secret_value)
+    return os.getenv("OPENAI_API_KEY", "")
 
 
 def clean_lines(value: str) -> list[str]:
@@ -378,9 +384,9 @@ def run_app() -> None:
         st.header("AI Settings")
         api_key = st.text_input(
             "OpenAI API key",
-            value=os.getenv("OPENAI_API_KEY", ""),
+            value=get_api_key(),
             type="password",
-            help="If your key is present in `.env`, it loads automatically here.",
+            help="Loads from Streamlit Secrets when deployed, or from your local environment when running locally.",
         )
         model = st.selectbox("Model", MODEL_OPTIONS, index=MODEL_OPTIONS.index(DEFAULT_MODEL))
         st.info(
@@ -409,7 +415,7 @@ def run_app() -> None:
         uploaded_template = st.file_uploader(
             "Excel template (optional)",
             type=["xlsx"],
-            help="Leave this empty to use the attached SRMD MOM template from your Downloads folder.",
+            help="Leave this empty to use the SRMD MOM template stored in the repo.",
         )
 
     with right_col:
