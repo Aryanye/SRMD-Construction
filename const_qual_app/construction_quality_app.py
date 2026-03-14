@@ -283,9 +283,19 @@ def build_compact_table(
     col_widths: list[float],
     header_color: str = "#143d59",
     body_fill: str = "#f8fbfd",
+    row_heights: list[float] | None = None,
 ) -> Table:
-    title_row = [[Paragraph(f"<b>{title}</b>", getSampleStyleSheet()["BodyText"]), ""]]
-    table = Table(title_row + rows, colWidths=col_widths, hAlign="LEFT")
+    header_style = ParagraphStyle(
+        "TableHeader",
+        parent=getSampleStyleSheet()["BodyText"],
+        fontName="Helvetica-Bold",
+        fontSize=9.5,
+        leading=11,
+        textColor=colors.white,
+        spaceAfter=0,
+    )
+    title_row = [[Paragraph(title, header_style)] + [""] * (len(col_widths) - 1)]
+    table = Table(title_row + rows, colWidths=col_widths, rowHeights=row_heights, hAlign="LEFT")
     table.setStyle(
         TableStyle(
             [
@@ -301,6 +311,43 @@ def build_compact_table(
                 ("PADDING", (0, 0), (-1, -1), 6),
             ]
         )
+    )
+    return table
+
+
+def build_matrix_card(
+    title: str,
+    items: list[str],
+    item_style: ParagraphStyle,
+    body_fill: str,
+    max_rows: int = 4,
+) -> Table:
+    number_style = ParagraphStyle(
+        "CardNumber",
+        parent=item_style,
+        fontName="Helvetica-Bold",
+        alignment=1,
+        leading=9,
+    )
+    rows: list[list[Any]] = []
+    trimmed_items = items[:max_rows]
+    for index in range(max_rows):
+        if index < len(trimmed_items):
+            rows.append(
+                [
+                    Paragraph(str(index + 1), number_style),
+                    Paragraph(trimmed_items[index], item_style),
+                ]
+            )
+        else:
+            rows.append(["", ""])
+
+    table = build_compact_table(
+        title,
+        rows,
+        [10 * mm, 76 * mm],
+        body_fill=body_fill,
+        row_heights=[10 * mm] + [15 * mm] * max_rows,
     )
     return table
 
@@ -338,8 +385,8 @@ def build_pdf_report(result: BatchInspectionResult, image_assets: list[dict[str,
     compact_style = ParagraphStyle(
         "CompactBody",
         parent=body_style,
-        fontSize=8.5,
-        leading=10,
+        fontSize=8,
+        leading=9.5,
         spaceAfter=0,
     )
 
@@ -367,22 +414,10 @@ def build_pdf_report(result: BatchInspectionResult, image_assets: list[dict[str,
         )
     )
 
-    strengths_rows = [
-        [str(index), Paragraph(item, compact_style)]
-        for index, item in enumerate(result.strengths, start=1)
-    ]
-    concerns_rows = [
-        [str(index), Paragraph(item, compact_style)]
-        for index, item in enumerate(result.concerns, start=1)
-    ]
-    improvements_rows = [
-        [str(index), Paragraph(item, compact_style)]
-        for index, item in enumerate(result.key_improvements, start=1)
-    ]
-    limitation_rows = [
-        [str(index), Paragraph(item, compact_style)]
-        for index, item in enumerate(result.limitations, start=1)
-    ]
+    strengths_rows = result.strengths
+    concerns_rows = result.concerns
+    improvements_rows = result.key_improvements
+    limitation_rows = result.limitations
     image_note_rows = [
         [Paragraph(f"<b>{item['image_name']}</b>", compact_style), Paragraph(item["finding"], compact_style)]
         for item in result.image_findings
@@ -402,12 +437,12 @@ def build_pdf_report(result: BatchInspectionResult, image_assets: list[dict[str,
         Table(
             [
                 [
-                    build_compact_table("What Is Working Well", strengths_rows, [10 * mm, 76 * mm], body_fill="#f6fbf6"),
-                    build_compact_table("Key Concerns", concerns_rows, [10 * mm, 76 * mm], body_fill="#fff7f5"),
+                    build_matrix_card("What Is Working Well", strengths_rows, compact_style, body_fill="#f6fbf6"),
+                    build_matrix_card("Key Concerns", concerns_rows, compact_style, body_fill="#fff7f5"),
                 ],
                 [
-                    build_compact_table("Priority Improvements", improvements_rows, [10 * mm, 76 * mm], body_fill="#fffdf2"),
-                    build_compact_table("Limitations", limitation_rows, [10 * mm, 76 * mm], body_fill="#f6f8fa"),
+                    build_matrix_card("Priority Improvements", improvements_rows, compact_style, body_fill="#fffdf2"),
+                    build_matrix_card("Limitations", limitation_rows, compact_style, body_fill="#f6f8fa"),
                 ],
             ],
             colWidths=[86 * mm, 86 * mm],
