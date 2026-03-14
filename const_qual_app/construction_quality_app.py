@@ -18,7 +18,7 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.lib.utils import ImageReader
 from reportlab.platypus import Image as RLImage
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 import streamlit as st
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parents[1] / ".env")
@@ -277,6 +277,34 @@ def make_pdf_image(image_bytes: bytes, image_name: str) -> list[Any]:
     return [pdf_image, Spacer(1, 3), Paragraph(image_name, caption_style)]
 
 
+def build_compact_table(
+    title: str,
+    rows: list[list[Any]],
+    col_widths: list[float],
+    header_color: str = "#143d59",
+    body_fill: str = "#f8fbfd",
+) -> Table:
+    title_row = [[Paragraph(f"<b>{title}</b>", getSampleStyleSheet()["BodyText"]), ""]]
+    table = Table(title_row + rows, colWidths=col_widths, hAlign="LEFT")
+    table.setStyle(
+        TableStyle(
+            [
+                ("SPAN", (0, 0), (-1, 0)),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(header_color)),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor(body_fill)),
+                ("TEXTCOLOR", (0, 1), (-1, -1), colors.HexColor("#1f2933")),
+                ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+                ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#d6dee6")),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("PADDING", (0, 0), (-1, -1), 6),
+            ]
+        )
+    )
+    return table
+
+
 def build_pdf_report(result: BatchInspectionResult, image_assets: list[dict[str, Any]]) -> bytes:
     buffer = BytesIO()
     doc = SimpleDocTemplate(
@@ -303,14 +331,16 @@ def build_pdf_report(result: BatchInspectionResult, image_assets: list[dict[str,
         "Body",
         parent=styles["BodyText"],
         fontName="Helvetica",
-        leading=14,
-        spaceAfter=5,
+        fontSize=9,
+        leading=11,
+        spaceAfter=4,
     )
-    bullet_style = ParagraphStyle(
-        "BulletBody",
+    compact_style = ParagraphStyle(
+        "CompactBody",
         parent=body_style,
-        leftIndent=12,
-        bulletIndent=0,
+        fontSize=8.5,
+        leading=10,
+        spaceAfter=0,
     )
 
     summary_table = Table(
@@ -337,41 +367,60 @@ def build_pdf_report(result: BatchInspectionResult, image_assets: list[dict[str,
         )
     )
 
-    story: list[Any] = [
-        Paragraph("Construction Quality Batch Report", title_style),
-        Spacer(1, 6),
-        summary_table,
-        Spacer(1, 12),
-        Paragraph("Executive Summary", heading_style),
-        Paragraph(result.executive_summary, body_style),
-        Paragraph("What Is Working Well", heading_style),
+    strengths_rows = [
+        [str(index), Paragraph(item, compact_style)]
+        for index, item in enumerate(result.strengths, start=1)
+    ]
+    concerns_rows = [
+        [str(index), Paragraph(item, compact_style)]
+        for index, item in enumerate(result.concerns, start=1)
+    ]
+    improvements_rows = [
+        [str(index), Paragraph(item, compact_style)]
+        for index, item in enumerate(result.key_improvements, start=1)
+    ]
+    limitation_rows = [
+        [str(index), Paragraph(item, compact_style)]
+        for index, item in enumerate(result.limitations, start=1)
+    ]
+    image_note_rows = [
+        [Paragraph(f"<b>{item['image_name']}</b>", compact_style), Paragraph(item["finding"], compact_style)]
+        for item in result.image_findings
     ]
 
-    for item in result.strengths:
-        story.append(Paragraph(item, bullet_style, bulletText="-"))
+    summary_story: list[Any] = [
+        Paragraph("Construction Quality Batch Report", title_style),
+        Spacer(1, 4),
+        summary_table,
+        Spacer(1, 8),
+        build_compact_table(
+            "Executive Summary",
+            [[Paragraph(result.executive_summary, compact_style)]],
+            [172 * mm],
+        ),
+        Spacer(1, 6),
+        Table(
+            [
+                [
+                    build_compact_table("What Is Working Well", strengths_rows, [10 * mm, 76 * mm], body_fill="#f6fbf6"),
+                    build_compact_table("Key Concerns", concerns_rows, [10 * mm, 76 * mm], body_fill="#fff7f5"),
+                ],
+                [
+                    build_compact_table("Priority Improvements", improvements_rows, [10 * mm, 76 * mm], body_fill="#fffdf2"),
+                    build_compact_table("Limitations", limitation_rows, [10 * mm, 76 * mm], body_fill="#f6f8fa"),
+                ],
+            ],
+            colWidths=[86 * mm, 86 * mm],
+            hAlign="LEFT",
+        ),
+        Spacer(1, 6),
+        build_compact_table("Image Notes", image_note_rows, [44 * mm, 128 * mm], body_fill="#f8fbfd"),
+    ]
 
-    story.append(Paragraph("Key Concerns", heading_style))
-    for item in result.concerns:
-        story.append(Paragraph(item, bullet_style, bulletText="-"))
-
-    story.append(Paragraph("Priority Improvements", heading_style))
-    for item in result.key_improvements:
-        story.append(Paragraph(item, bullet_style, bulletText="-"))
-
-    story.append(Paragraph("Image Notes", heading_style))
-    for item in result.image_findings:
-        story.append(
-            Paragraph(
-                f"<b>{item['image_name']}</b>: {item['finding']}",
-                body_style,
-            )
-        )
-
-    story.append(Paragraph("Limitations", heading_style))
-    for item in result.limitations:
-        story.append(Paragraph(item, bullet_style, bulletText="-"))
+    story: list[Any] = [KeepTogether(summary_story)]
 
     if image_assets:
+        story.append(Spacer(1, 10))
         story.append(Paragraph("Photo Record", heading_style))
         image_cells: list[list[Any]] = []
         row: list[Any] = []
