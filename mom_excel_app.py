@@ -54,6 +54,17 @@ class MeetingRecord:
     discussion_points: list[DiscussionPoint]
 
 
+@dataclass
+class ExistingMomContext:
+    project_name: str = ""
+    meeting_title: str = ""
+    meeting_date: str = ""
+    place: str = ""
+    attendees: list[str] | None = None
+    discussion_notes: str = ""
+    workbook_text: str = ""
+
+
 def sanitize_text(value: Any, fallback: str) -> str:
     text = str(value or "").strip()
     return text or fallback
@@ -87,6 +98,88 @@ def parse_json_response(raw_text: str) -> dict[str, Any]:
         if not match:
             raise ValueError("The model response was not valid JSON.")
         return json.loads(match.group(0))
+
+
+def unique_nonempty(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        cleaned = value.strip()
+        if not cleaned:
+            continue
+        lowered = cleaned.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        result.append(cleaned)
+    return result
+
+
+def split_date_place(value: str) -> tuple[str, str]:
+    text = value.strip()
+    if not text:
+        return "", ""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return "", ""
+    if len(lines) == 1 and "place:" in lines[0].lower():
+        date_part, place_part = re.split(r"place\s*:", lines[0], maxsplit=1, flags=re.IGNORECASE)
+        return date_part.strip(" :-"), place_part.strip()
+
+    date_part = lines[0]
+    place_part = ""
+    for line in lines[1:]:
+        if line.lower().startswith("place:"):
+            place_part = line.split(":", 1)[1].strip()
+        elif not place_part:
+            place_part = line
+    return date_part, place_part
+
+
+def extract_existing_mom_context(uploaded_file: Any) -> ExistingMomContext:
+    workbook = load_workbook(BytesIO(uploaded_file.getvalue()), data_only=True)
+    worksheet = workbook[workbook.sheetnames[0]]
+
+    workbook_values: list[str] = []
+    for row in worksheet.iter_rows(values_only=True):
+        for value in row:
+            text = str(value).strip() if value is not None else ""
+            if text:
+                workbook_values.append(text)
+
+    discussion_lines: list[str] = []
+    for row in range(DISCUSSION_START_ROW, worksheet.max_row + 1):
+        point = str(worksheet[f"C{row}"].value or "").strip()
+        discipline = str(worksheet[f"E{row}"].value or "").strip()
+        remark = str(worksheet[f"F{row}"].value or "").strip()
+        if point:
+            line = point
+            if discipline:
+                line += f" | Discipline: {discipline}"
+            if remark:
+                line += f" | Remark: {remark}"
+            discussion_lines.append(line)
+
+    attendee_candidates = unique_nonempty(
+        [
+            str(worksheet[coord].value or "").strip()
+            for coord in ["C8", "D9", "D10", "D11", "D12", "D13", "D14"]
+        ]
+    )
+
+    date_value, place_value = split_date_place(str(worksheet["D5"].value or ""))
+    discussion_notes = "\n".join(discussion_lines)
+    workbook_text = "\n".join(unique_nonempty(workbook_values))
+
+    return ExistingMomContext(
+        project_name=str(worksheet["B2"].value or "").strip(),
+        meeting_title=str(worksheet["D4"].value or "").strip(),
+        meeting_date=date_value,
+        place=place_value,
+        attendees=attendee_candidates,
+        discussion_notes=discussion_notes,
+        workbook_text=workbook_text,
+    )
 
 
 def infer_discipline(text: str) -> str:
@@ -394,17 +487,65 @@ def run_app() -> None:
 
     with left_col:
         st.subheader("Meeting Inputs")
-        project_name = st.text_input("Project name", placeholder="e.g. SRMD Warehouse Extension")
-        meeting_title = st.text_input("Meeting title", value="Site Visit Meeting")
-        meeting_date = st.text_input("Meeting date", placeholder="e.g. 14 March 2026")
-        place = st.text_input("Place", placeholder="e.g. Ahmedabad site office")
+        existing_mom_upload = st.file_uploader(
+            "Upload existing MOM Excel (optional)",
+            type=["xlsx"],
+            help="Use an older or pre-made MOM workbook to prefill the form and add context for the new output.",
+        )
+
+        extracted_context = ExistingMomContext(attendees=[])
+        if existing_mom_upload is not None:
+            try:
+                upload_signature = (
+                    existing_mom_upload.name,
+                    existing_mom_upload.size,
+                )
+                if st.session_state.get("existing_mom_signature") != upload_signature:
+                    extracted_context = extract_existing_mom_context(existing_mom_upload)
+                    st.session_state["existing_mom_signature"] = upload_signature
+                    if extracted_context.project_name:
+                        st.session_state["project_name_input"] = extracted_context.project_name
+                    if extracted_context.meeting_title:
+                        st.session_state["meeting_title_input"] = extracted_context.meeting_title
+                    if extracted_context.meeting_date:
+                        st.session_state["meeting_date_input"] = extracted_context.meeting_date
+                    if extracted_context.place:
+                        st.session_state["place_input"] = extracted_context.place
+                    if extracted_context.attendees:
+                        st.session_state["attendees_input"] = "\n".join(extracted_context.attendees)
+                    if extracted_context.discussion_notes and not st.session_state.get("meeting_notes_input", "").strip():
+                        st.session_state["meeting_notes_input"] = extracted_context.discussion_notes
+                    if extracted_context.workbook_text and not st.session_state.get("extra_context_input", "").strip():
+                        st.session_state["extra_context_input"] = (
+                            "Existing MOM workbook context:\n" + extracted_context.workbook_text
+                        )
+                else:
+                    extracted_context = extract_existing_mom_context(existing_mom_upload)
+                st.caption("Existing MOM loaded. Any extracted values are prefilled below and can still be edited.")
+            except Exception as exc:
+                st.warning(f"Could not read the uploaded MOM Excel file: {exc}")
+
+        project_name = st.text_input(
+            "Project name",
+            key="project_name_input",
+            placeholder="e.g. SRMD Warehouse Extension",
+        )
+        meeting_title = st.text_input("Meeting title", key="meeting_title_input", value="Site Visit Meeting")
+        meeting_date = st.text_input(
+            "Meeting date",
+            key="meeting_date_input",
+            placeholder="e.g. 14 March 2026",
+        )
+        place = st.text_input("Place", key="place_input", placeholder="e.g. Ahmedabad site office")
         attendees_text = st.text_area(
             "Attendees",
+            key="attendees_input",
             placeholder="One attendee per line\nJohn Shah - Consultant\nMehul Patel - Contractor",
             height=140,
         )
         extra_context = st.text_area(
             "Optional context",
+            key="extra_context_input",
             placeholder="Anything else the AI should know, like phase, package, contractor names, or purpose of the visit.",
             height=120,
         )
@@ -413,6 +554,7 @@ def run_app() -> None:
         st.subheader("Meeting Notes")
         meeting_notes = st.text_area(
             "Paste the raw minutes / site visit notes here",
+            key="meeting_notes_input",
             placeholder="Paste the long MOM text, WhatsApp notes, bullet points, or site visit summary here.",
             height=420,
         )
@@ -429,6 +571,22 @@ def run_app() -> None:
     if generate_clicked:
         try:
             with st.spinner("Structuring the meeting notes and preparing the Excel file..."):
+                uploaded_mom_notes = ""
+                uploaded_mom_context = ""
+                if existing_mom_upload is not None:
+                    existing_context = extract_existing_mom_context(existing_mom_upload)
+                    uploaded_mom_notes = existing_context.discussion_notes
+                    uploaded_mom_context = existing_context.workbook_text
+
+                combined_notes = meeting_notes.strip()
+                if uploaded_mom_notes:
+                    combined_notes = f"{combined_notes}\n\nReference MOM Excel notes:\n{uploaded_mom_notes}".strip()
+
+                combined_context = extra_context.strip()
+                if uploaded_mom_context:
+                    addition = f"Reference MOM Excel workbook details:\n{uploaded_mom_context}"
+                    combined_context = f"{combined_context}\n\n{addition}".strip() if combined_context else addition
+
                 record = generate_meeting_record(
                     api_key=api_key.strip(),
                     model=model,
@@ -437,8 +595,8 @@ def run_app() -> None:
                     meeting_date=meeting_date,
                     place=place,
                     attendees_text=attendees_text,
-                    notes=meeting_notes,
-                    extra_context=extra_context,
+                    notes=combined_notes,
+                    extra_context=combined_context,
                 )
                 generated_workbook = build_workbook(template_bytes(), record)
 
