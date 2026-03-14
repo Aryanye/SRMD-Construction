@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import base64
 from copy import copy
 from dataclasses import dataclass
+from html import escape
 from io import BytesIO
 import json
 import os
@@ -13,6 +15,11 @@ from openai import OpenAI
 from openpyxl import load_workbook
 from openpyxl.cell.cell import MergedCell
 from openpyxl.styles import Alignment
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.units import mm
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 import streamlit as st
 
 APP_TITLE = "SRMD MOM Generator"
@@ -117,6 +124,56 @@ def unique_nonempty(values: list[str]) -> list[str]:
         seen.add(lowered)
         result.append(cleaned)
     return result
+
+
+def extract_attendees_from_text(*texts: str) -> list[str]:
+    attendees: list[str] = []
+    section_headers = ("attendees", "attendee", "present", "participants", "present members")
+    stop_headers = ("discussion", "agenda", "points", "summary", "remarks", "conclusion", "action")
+    attendee_markers = ("mr", "mrs", "ms", "dr", "er", "architect", "consultant", "client", "contractor", "engineer")
+
+    for text in texts:
+        if not text:
+            continue
+        lines = [line.strip() for line in text.splitlines()]
+        capture = False
+        for line in lines:
+            if not line:
+                if capture:
+                    capture = False
+                continue
+            normalized = line.strip(" :-").lower()
+            if any(normalized.startswith(header) for header in section_headers):
+                capture = True
+                extracted = line.split(":", 1)[1].strip() if ":" in line else ""
+                if extracted:
+                    attendees.extend(re.split(r",|;|\n", extracted))
+                continue
+            stripped_numbered_line = re.sub(r"^\d+[\).:-]\s*", "", line).strip()
+            numbered_attendee_line = (
+                re.match(r"^\d+[\).:-]", line)
+                and (
+                    " - " in stripped_numbered_line
+                    or any(marker in stripped_numbered_line.lower() for marker in attendee_markers)
+                )
+            )
+            if capture and (
+                any(normalized.startswith(header) for header in stop_headers)
+                or (re.match(r"^\d+[\).:-]", line) and not numbered_attendee_line)
+            ):
+                capture = False
+            if capture:
+                attendees.extend(re.split(r",|;", stripped_numbered_line if numbered_attendee_line else line))
+
+    cleaned: list[str] = []
+    for attendee in attendees:
+        attendee = re.sub(r"^\d+[\).:-]?\s*", "", attendee).strip(" -")
+        if len(attendee) < 3:
+            continue
+        if any(token in attendee.lower() for token in stop_headers):
+            continue
+        cleaned.append(attendee)
+    return unique_nonempty(cleaned)
 
 
 def set_project_state(project_name: str) -> None:
@@ -258,7 +315,7 @@ def heuristic_meeting_record(
     attendees_text: str,
     notes: str,
 ) -> MeetingRecord:
-    attendees = clean_lines(attendees_text)
+    attendees = unique_nonempty(clean_lines(attendees_text) + extract_attendees_from_text(attendees_text, notes))
     return MeetingRecord(
         project_name=sanitize_text(project_name, "PROJECT NAME TO BE CONFIRMED"),
         meeting_title=sanitize_text(meeting_title, "Site Visit Meeting"),
@@ -466,6 +523,42 @@ def fill_discussion_table(ws: Any, discussion_points: list[DiscussionPoint]) -> 
             ws[coord].alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
 
 
+def estimate_line_count(text: str, width_units: float) -> int:
+    if not text:
+        return 1
+    normalized = str(text).replace("\r", "")
+    explicit_lines = normalized.split("\n")
+    chars_per_line = max(12, int(width_units * 1.4))
+    total_lines = 0
+    for line in explicit_lines:
+        total_lines += max(1, (len(line) // chars_per_line) + (1 if len(line) % chars_per_line else 0))
+    return max(1, total_lines)
+
+
+def adjust_sheet_layout(ws: Any, meeting_record: MeetingRecord) -> None:
+    point_lengths = [len(point.point_of_discussion) for point in meeting_record.discussion_points] or [0]
+    discipline_lengths = [len(point.discipline_of_work) for point in meeting_record.discussion_points] or [0]
+    remark_lengths = [len(point.conclusion_or_remark) for point in meeting_record.discussion_points] or [0]
+
+    ws.column_dimensions["C"].width = max(ws.column_dimensions["C"].width or 39, min(48, 30 + max(point_lengths) / 8))
+    ws.column_dimensions["D"].width = max(ws.column_dimensions["D"].width or 30, min(36, 24 + max(point_lengths) / 10))
+    ws.column_dimensions["E"].width = max(ws.column_dimensions["E"].width or 13, min(20, 11 + max(discipline_lengths) / 5))
+    ws.column_dimensions["F"].width = max(ws.column_dimensions["F"].width or 52, min(62, 32 + max(remark_lengths) / 5))
+
+    attendee_rows = ["C8", "D9", "D10", "D11", "D12", "D13", "D14"]
+    for coord in attendee_rows:
+        row = ws[coord].row
+        line_count = estimate_line_count(str(ws[coord].value or ""), 38)
+        ws.row_dimensions[row].height = max(ws.row_dimensions[row].height or 18, 16 * line_count)
+
+    for row in range(DISCUSSION_START_ROW, DISCUSSION_START_ROW + len(meeting_record.discussion_points)):
+        point_lines = estimate_line_count(str(ws[f"C{row}"].value or ""), (ws.column_dimensions["C"].width or 40) + (ws.column_dimensions["D"].width or 30))
+        discipline_lines = estimate_line_count(str(ws[f"E{row}"].value or ""), ws.column_dimensions["E"].width or 13)
+        remark_lines = estimate_line_count(str(ws[f"F{row}"].value or ""), ws.column_dimensions["F"].width or 52)
+        row_lines = max(point_lines, discipline_lines, remark_lines)
+        ws.row_dimensions[row].height = max(ws.row_dimensions[row].height or 18, 15 * row_lines)
+
+
 def build_workbook(template_content: bytes, meeting_record: MeetingRecord) -> bytes:
     workbook = load_workbook(BytesIO(template_content))
     worksheet = workbook[workbook.sheetnames[0]]
@@ -477,11 +570,72 @@ def build_workbook(template_content: bytes, meeting_record: MeetingRecord) -> by
 
     fill_attendees(worksheet, meeting_record.attendees)
     fill_discussion_table(worksheet, meeting_record.discussion_points)
+    adjust_sheet_layout(worksheet, meeting_record)
 
     output = BytesIO()
     workbook.save(output)
     output.seek(0)
     return output.getvalue()
+
+
+def build_pdf_report(meeting_record: MeetingRecord) -> bytes:
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=15 * mm,
+        rightMargin=15 * mm,
+        topMargin=15 * mm,
+        bottomMargin=15 * mm,
+    )
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle("MOMTitle", parent=styles["Title"], textColor=colors.HexColor("#1f3a5f"))
+    body_style = ParagraphStyle("MOMBody", parent=styles["BodyText"], leading=14, spaceAfter=5)
+    small_style = ParagraphStyle("MOMSmall", parent=body_style, fontSize=9, leading=11)
+
+    story: list[Any] = [
+        Paragraph("Minutes of Meeting", title_style),
+        Spacer(1, 4),
+        Paragraph(f"<b>Project:</b> {escape(meeting_record.project_name)}", body_style),
+        Paragraph(f"<b>Meeting:</b> {escape(meeting_record.meeting_title)}", body_style),
+        Paragraph(f"<b>Date:</b> {escape(meeting_record.meeting_date)}", body_style),
+        Paragraph(f"<b>Place:</b> {escape(meeting_record.place)}", body_style),
+        Spacer(1, 4),
+        Paragraph("<b>Attendees</b>", body_style),
+    ]
+
+    for attendee in meeting_record.attendees:
+        story.append(Paragraph(f"- {escape(attendee)}", body_style))
+
+    story.append(Spacer(1, 6))
+    table_data = [["Sr. No.", "Point of Discussion", "Discipline", "Conclusion / Remark"]]
+    for index, point in enumerate(meeting_record.discussion_points, start=1):
+        table_data.append(
+            [
+                str(index),
+                Paragraph(escape(point.point_of_discussion), small_style),
+                Paragraph(escape(point.discipline_of_work), small_style),
+                Paragraph(escape(point.conclusion_or_remark), small_style),
+            ]
+        )
+
+    table = Table(table_data, colWidths=[15 * mm, 75 * mm, 28 * mm, 62 * mm], repeatRows=1)
+    table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#d9ead3")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#8a8a8a")),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("PADDING", (0, 0), (-1, -1), 5),
+            ]
+        )
+    )
+    story.append(table)
+    doc.build(story)
+    buffer.seek(0)
+    return buffer.getvalue()
 
 def run_app() -> None:
     st.set_page_config(page_title=APP_TITLE, layout="wide")
@@ -617,10 +771,12 @@ def run_app() -> None:
             with st.spinner("Structuring the meeting notes and preparing the Excel file..."):
                 uploaded_mom_notes = ""
                 uploaded_mom_context = ""
+                uploaded_mom_attendees: list[str] = []
                 if existing_mom_upload is not None:
                     existing_context = extract_existing_mom_context(existing_mom_upload)
                     uploaded_mom_notes = existing_context.discussion_notes
                     uploaded_mom_context = existing_context.workbook_text
+                    uploaded_mom_attendees = existing_context.attendees or []
 
                 combined_notes = meeting_notes.strip()
                 if uploaded_mom_notes:
@@ -631,6 +787,13 @@ def run_app() -> None:
                     addition = f"Reference MOM Excel workbook details:\n{uploaded_mom_context}"
                     combined_context = f"{combined_context}\n\n{addition}".strip() if combined_context else addition
 
+                combined_attendees = unique_nonempty(
+                    clean_lines(attendees_text)
+                    + uploaded_mom_attendees
+                    + extract_attendees_from_text(attendees_text, meeting_notes, combined_context)
+                )
+                attendees_payload = "\n".join(combined_attendees)
+
                 record = generate_meeting_record(
                     api_key=api_key.strip(),
                     model=model,
@@ -638,11 +801,13 @@ def run_app() -> None:
                     meeting_title=meeting_title,
                     meeting_date=meeting_date,
                     place=place,
-                    attendees_text=attendees_text,
+                    attendees_text=attendees_payload,
                     notes=combined_notes,
                     extra_context=combined_context,
                 )
+                record.attendees = unique_nonempty(record.attendees + combined_attendees)
                 generated_workbook = build_workbook(template_bytes(), record)
+                generated_pdf = build_pdf_report(record)
 
             st.success("Excel MOM generated successfully.")
 
@@ -656,23 +821,47 @@ def run_app() -> None:
                 for index, point in enumerate(record.discussion_points, start=1)
             ]
 
-            st.subheader("Structured Preview")
-            st.write(f"**Project:** {record.project_name}")
-            st.write(f"**Meeting:** {record.meeting_title}")
-            st.write(f"**Date:** {record.meeting_date}")
-            st.write(f"**Place:** {record.place}")
-            st.write("**Attendees:**")
-            for attendee in record.attendees:
-                st.write(f"- {attendee}")
-            st.dataframe(preview_rows, use_container_width=True, hide_index=True)
+            excel_tab, pdf_tab = st.tabs(["Excel Preview", "PDF Preview"])
+
+            with excel_tab:
+                st.subheader("Structured Preview")
+                st.write(f"**Project:** {record.project_name}")
+                st.write(f"**Meeting:** {record.meeting_title}")
+                st.write(f"**Date:** {record.meeting_date}")
+                st.write(f"**Place:** {record.place}")
+                st.write("**Attendees:**")
+                for attendee in record.attendees:
+                    st.write(f"- {attendee}")
+                st.dataframe(preview_rows, use_container_width=True, hide_index=True)
+
+            with pdf_tab:
+                st.subheader("PDF Preview")
+                pdf_base64 = base64.b64encode(generated_pdf).decode("ascii")
+                st.markdown(
+                    (
+                        "<iframe style='width:100%; height:900px; border:1px solid #ddd;' "
+                        f"src='data:application/pdf;base64,{pdf_base64}'></iframe>"
+                    ),
+                    unsafe_allow_html=True,
+                )
 
             output_name = sanitize_filename(f"{record.project_name}_{record.meeting_date}_MOM") + ".xlsx"
-            st.download_button(
-                label="Download Excel File",
-                data=generated_workbook,
-                file_name=output_name,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
+            pdf_name = sanitize_filename(f"{record.project_name}_{record.meeting_date}_MOM") + ".pdf"
+            download_col_1, download_col_2 = st.columns(2)
+            with download_col_1:
+                st.download_button(
+                    label="Download Excel File",
+                    data=generated_workbook,
+                    file_name=output_name,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            with download_col_2:
+                st.download_button(
+                    label="Download PDF File",
+                    data=generated_pdf,
+                    file_name=pdf_name,
+                    mime="application/pdf",
+                )
         except Exception as exc:
             st.error(f"Could not generate the MOM workbook: {exc}")
 
