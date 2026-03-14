@@ -30,10 +30,12 @@ NGH_PROJECT_OPTIONS = ["NGH-A", "NGH-B", "NGH-C"]
 MANUAL_PROJECT_OPTION = "Other (Enter manually)"
 PROJECT_SELECTION_OPTIONS = ["Select project"] + PROJECT_OPTIONS + [MANUAL_PROJECT_OPTION]
 DEFAULT_TEMPLATE_PATH = "mom_app/SRMD MOM Format.xlsx"
-DISCUSSION_START_ROW = 18
+DISCUSSION_START_ROW = 19
 BASE_DISCUSSION_ROWS = 9
-FOOTER_START_ROW = 27
-MIDDLE_DISCUSSION_TEMPLATE_ROW = 25
+FOOTER_START_ROW = 28
+MIDDLE_DISCUSSION_TEMPLATE_ROW = 27
+ATTENDEE_START_ROW = 10
+ATTENDEE_ROW_COUNT = 6
 
 SYSTEM_PROMPT = """
 You convert raw site-visit meeting notes into a structured Minutes of Meeting record.
@@ -74,6 +76,12 @@ class ExistingMomContext:
     attendees: list[str] | None = None
     discussion_notes: str = ""
     workbook_text: str = ""
+
+
+@dataclass
+class AttendeeEntry:
+    full_name: str
+    agency: str = ""
 
 
 def sanitize_text(value: Any, fallback: str) -> str:
@@ -176,6 +184,22 @@ def extract_attendees_from_text(*texts: str) -> list[str]:
     return unique_nonempty(cleaned)
 
 
+def parse_attendee_entries(attendees: list[str]) -> list[AttendeeEntry]:
+    parsed: list[AttendeeEntry] = []
+    for attendee in attendees:
+        text = attendee.strip()
+        if not text:
+            continue
+        full_name = text
+        agency = ""
+        if " - " in text:
+            full_name, agency = [part.strip() for part in text.split(" - ", 1)]
+        elif "," in text:
+            full_name, agency = [part.strip() for part in text.split(",", 1)]
+        parsed.append(AttendeeEntry(full_name=full_name or text, agency=agency))
+    return parsed
+
+
 def set_project_state(project_name: str) -> None:
     project_name = project_name.strip()
     parsed_gh_projects = [option for option in NGH_PROJECT_OPTIONS if option.lower() in project_name.lower()]
@@ -238,12 +262,13 @@ def extract_existing_mom_context(uploaded_file: Any) -> ExistingMomContext:
                 line += f" | Remark: {remark}"
             discussion_lines.append(line)
 
-    attendee_candidates = unique_nonempty(
-        [
-            str(worksheet[coord].value or "").strip()
-            for coord in ["C8", "D9", "D10", "D11", "D12", "D13", "D14"]
-        ]
-    )
+    attendee_candidates: list[str] = []
+    for row in range(ATTENDEE_START_ROW, ATTENDEE_START_ROW + ATTENDEE_ROW_COUNT):
+        full_name = str(worksheet[f"C{row}"].value or "").strip()
+        agency = str(worksheet[f"D{row}"].value or "").strip()
+        if full_name:
+            attendee_candidates.append(f"{full_name} - {agency}".strip(" -"))
+    attendee_candidates = unique_nonempty(attendee_candidates)
 
     date_value, place_value = split_date_place(str(worksheet["D5"].value or ""))
     discussion_notes = "\n".join(discussion_lines)
@@ -472,9 +497,9 @@ def rebuild_dynamic_layout(ws: Any, extra_rows: int) -> None:
     if extra_rows <= 0:
         return
 
-    saved_heights = {row: ws.row_dimensions[row].height for row in range(FOOTER_START_ROW, 34)}
+    saved_heights = {row: ws.row_dimensions[row].height for row in range(FOOTER_START_ROW, 35)}
 
-    ws.move_range(f"B{FOOTER_START_ROW}:F33", rows=extra_rows, cols=0, translate=True)
+    ws.move_range(f"B{FOOTER_START_ROW}:F34", rows=extra_rows, cols=0, translate=True)
 
     for merged_range in list(ws.merged_cells.ranges):
         if merged_range.min_row >= FOOTER_START_ROW:
@@ -484,27 +509,38 @@ def rebuild_dynamic_layout(ws: Any, extra_rows: int) -> None:
         copy_row_style(ws, MIDDLE_DISCUSSION_TEMPLATE_ROW, row, start_col=2, end_col=6)
         ws.merge_cells(start_row=row, start_column=3, end_row=row, end_column=4)
 
-    for row in range(FOOTER_START_ROW + extra_rows, 34 + extra_rows):
+    for row in range(FOOTER_START_ROW + extra_rows, 35 + extra_rows):
         original_row = row - extra_rows
         if original_row in saved_heights:
             ws.row_dimensions[row].height = saved_heights[original_row]
 
-    ws.merge_cells(start_row=28 + extra_rows, start_column=2, end_row=28 + extra_rows, end_column=6)
+    ws.merge_cells(start_row=28 + extra_rows, start_column=3, end_row=28 + extra_rows, end_column=4)
     ws.merge_cells(start_row=29 + extra_rows, start_column=2, end_row=29 + extra_rows, end_column=6)
-    ws.merge_cells(start_row=30 + extra_rows, start_column=2, end_row=32 + extra_rows, end_column=6)
-    ws.merge_cells(start_row=33 + extra_rows, start_column=3, end_row=33 + extra_rows, end_column=4)
+    ws.merge_cells(start_row=30 + extra_rows, start_column=2, end_row=30 + extra_rows, end_column=6)
+    ws.merge_cells(start_row=31 + extra_rows, start_column=2, end_row=33 + extra_rows, end_column=6)
+    ws.merge_cells(start_row=34 + extra_rows, start_column=3, end_row=34 + extra_rows, end_column=4)
 
 
 def fill_attendees(ws: Any, attendees: list[str]) -> None:
-    attendee_cells = ["C8", "D9", "D10", "D11", "D12", "D13", "D14"]
-    for coord, attendee in zip(attendee_cells, attendees[: len(attendee_cells)]):
-        ws[coord] = attendee
-        ws[coord].alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    parsed_attendees = parse_attendee_entries(attendees)
+    for index, attendee in enumerate(parsed_attendees[:ATTENDEE_ROW_COUNT], start=ATTENDEE_START_ROW):
+        ws[f"B{index}"] = index - ATTENDEE_START_ROW + 1
+        ws[f"C{index}"] = attendee.full_name
+        ws[f"D{index}"] = attendee.agency
+        ws[f"C{index}"].alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+        ws[f"D{index}"].alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
 
-    if len(attendees) > len(attendee_cells):
-        overflow = "Additional attendees: " + ", ".join(attendees[len(attendee_cells) :])
-        ws["D14"] = f"{ws['D14'].value}\n{overflow}" if ws["D14"].value else overflow
-        ws["D14"].alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    if len(parsed_attendees) > ATTENDEE_ROW_COUNT:
+        overflow_items = parsed_attendees[ATTENDEE_ROW_COUNT:]
+        overflow_names = ", ".join(item.full_name for item in overflow_items)
+        overflow_agencies = ", ".join(item.agency for item in overflow_items if item.agency)
+        ws[f"C{ATTENDEE_START_ROW + ATTENDEE_ROW_COUNT - 1}"] = (
+            f"{ws[f'C{ATTENDEE_START_ROW + ATTENDEE_ROW_COUNT - 1}'].value}\nAdditional: {overflow_names}"
+        )
+        if overflow_agencies:
+            ws[f"D{ATTENDEE_START_ROW + ATTENDEE_ROW_COUNT - 1}"] = (
+                f"{ws[f'D{ATTENDEE_START_ROW + ATTENDEE_ROW_COUNT - 1}'].value or ''}\n{overflow_agencies}".strip()
+            )
 
 
 def fill_discussion_table(ws: Any, discussion_points: list[DiscussionPoint]) -> None:
@@ -545,11 +581,10 @@ def adjust_sheet_layout(ws: Any, meeting_record: MeetingRecord) -> None:
     ws.column_dimensions["E"].width = max(ws.column_dimensions["E"].width or 13, min(20, 11 + max(discipline_lengths) / 5))
     ws.column_dimensions["F"].width = max(ws.column_dimensions["F"].width or 52, min(62, 32 + max(remark_lengths) / 5))
 
-    attendee_rows = ["C8", "D9", "D10", "D11", "D12", "D13", "D14"]
-    for coord in attendee_rows:
-        row = ws[coord].row
-        line_count = estimate_line_count(str(ws[coord].value or ""), 38)
-        ws.row_dimensions[row].height = max(ws.row_dimensions[row].height or 18, 16 * line_count)
+    for row in range(ATTENDEE_START_ROW, ATTENDEE_START_ROW + ATTENDEE_ROW_COUNT):
+        name_lines = estimate_line_count(str(ws[f"C{row}"].value or ""), ws.column_dimensions["C"].width or 39)
+        agency_lines = estimate_line_count(str(ws[f"D{row}"].value or ""), (ws.column_dimensions["D"].width or 30) + (ws.column_dimensions["F"].width or 52))
+        ws.row_dimensions[row].height = max(ws.row_dimensions[row].height or 18, 16 * max(name_lines, agency_lines))
 
     for row in range(DISCUSSION_START_ROW, DISCUSSION_START_ROW + len(meeting_record.discussion_points)):
         point_lines = estimate_line_count(str(ws[f"C{row}"].value or ""), (ws.column_dimensions["C"].width or 40) + (ws.column_dimensions["D"].width or 30))
