@@ -18,6 +18,9 @@ import streamlit as st
 APP_TITLE = "SRMD MOM Generator"
 DEFAULT_MODEL = "gpt-5.1"
 MODEL_OPTIONS = ["gpt-5.1", "gpt-5-mini", "gpt-4.1"]
+PROJECT_OPTIONS = ["Vinay-Vivek", "NGH-A", "NGH-B", "NGH-C", "P2", "SRAH", "RU"]
+MANUAL_PROJECT_OPTION = "Other (Enter manually)"
+PROJECT_SELECTION_OPTIONS = ["Select project"] + PROJECT_OPTIONS + [MANUAL_PROJECT_OPTION]
 DEFAULT_TEMPLATE_PATH = "mom_app/SRMD MOM Format.xlsx"
 DISCUSSION_START_ROW = 18
 BASE_DISCUSSION_ROWS = 9
@@ -113,6 +116,16 @@ def unique_nonempty(values: list[str]) -> list[str]:
         seen.add(lowered)
         result.append(cleaned)
     return result
+
+
+def set_project_state(project_name: str) -> None:
+    project_name = project_name.strip()
+    if project_name in PROJECT_OPTIONS:
+        st.session_state["project_name_select"] = project_name
+        st.session_state["project_name_custom_input"] = ""
+    elif project_name:
+        st.session_state["project_name_select"] = MANUAL_PROJECT_OPTION
+        st.session_state["project_name_custom_input"] = project_name
 
 
 def split_date_place(value: str) -> tuple[str, str]:
@@ -504,7 +517,7 @@ def run_app() -> None:
                     extracted_context = extract_existing_mom_context(existing_mom_upload)
                     st.session_state["existing_mom_signature"] = upload_signature
                     if extracted_context.project_name:
-                        st.session_state["project_name_input"] = extracted_context.project_name
+                        set_project_state(extracted_context.project_name)
                     if extracted_context.meeting_title:
                         st.session_state["meeting_title_input"] = extracted_context.meeting_title
                     if extracted_context.meeting_date:
@@ -525,11 +538,24 @@ def run_app() -> None:
             except Exception as exc:
                 st.warning(f"Could not read the uploaded MOM Excel file: {exc}")
 
-        project_name = st.text_input(
+        st.session_state.setdefault("project_name_select", "Select project")
+        st.session_state.setdefault("project_name_custom_input", "")
+        st.session_state.setdefault("meeting_title_input", "Site Visit Meeting")
+
+        selected_project_name = st.selectbox(
             "Project name",
-            key="project_name_input",
-            placeholder="e.g. SRMD Warehouse Extension",
+            PROJECT_SELECTION_OPTIONS,
+            key="project_name_select",
         )
+        project_name = selected_project_name
+        if selected_project_name == MANUAL_PROJECT_OPTION:
+            project_name = st.text_input(
+                "Manual project name",
+                key="project_name_custom_input",
+                placeholder="Enter project name",
+            )
+        elif selected_project_name == "Select project":
+            project_name = ""
         meeting_title = st.text_input("Meeting title", key="meeting_title_input", value="Site Visit Meeting")
         meeting_date = st.text_input(
             "Meeting date",
