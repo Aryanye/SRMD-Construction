@@ -18,7 +18,7 @@ import streamlit as st
 APP_TITLE = "SRMD MOM Generator"
 DEFAULT_MODEL = "gpt-5.1"
 MODEL_OPTIONS = ["gpt-5.1", "gpt-5-mini", "gpt-4.1"]
-DEFAULT_TEMPLATE_PATH = "SRMD MOM Format.xlsx"
+DEFAULT_TEMPLATE_PATH = "mom_app/SRMD MOM Format.xlsx"
 DISCUSSION_START_ROW = 18
 BASE_DISCUSSION_ROWS = 9
 FOOTER_START_ROW = 27
