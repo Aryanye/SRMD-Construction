@@ -1,10 +1,10 @@
 # Construction Quality Inspector
 
-Upload construction-site photos, add a project name and work type for each image, and generate:
+Upload one or more construction-site photos for the same project batch and generate:
 
-- an AI quality review for each image
-- an overall site summary
-- a downloadable PDF report for each image
+- one combined AI quality review for the batch
+- clear priority improvements to make on the project
+- a downloadable PDF report with the uploaded photos embedded
 
 ## Run
 

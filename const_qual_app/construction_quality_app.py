@@ -16,6 +16,8 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
+from reportlab.lib.utils import ImageReader
+from reportlab.platypus import Image as RLImage
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 import streamlit as st
 
@@ -26,78 +28,47 @@ DEFAULT_MODEL = "gpt-5.1"
 MODEL_OPTIONS = ["gpt-5.1", "gpt-5-mini", "gpt-4.1"]
 QUALITY_LEVELS = ["Excellent", "Good", "Fair", "Poor", "Critical"]
 CONFIDENCE_LEVELS = ["High", "Medium", "Low"]
-WORK_TYPE_OPTIONS = [
-    "Structural concrete",
-    "Masonry",
-    "Plastering",
-    "Flooring",
-    "Waterproofing",
-    "Painting",
-    "MEP installation",
-    "Facade work",
-    "Finishing work",
-    "Housekeeping and safety",
-    "Other",
-]
 SYSTEM_PROMPT = """
 You are a construction quality inspector assistant.
-Assess visible workmanship, quality issues, safety concerns, finish consistency,
-material condition, and signs of poor execution from a single construction-site image.
+Assess uploaded construction-site photos as one project batch.
 
 Rules:
-- Base your judgment only on what is visible in the image.
-- Do not claim compliance with codes, structural integrity, or hidden defects unless you clearly state that they cannot be verified visually.
-- Keep the report practical for a site manager.
+- Analyze the full batch together. If only one image is provided, analyze that single image.
+- Base judgments only on what is visible in the photos.
+- Do not claim code compliance, structural adequacy, or hidden defects unless you clearly state that they cannot be verified visually.
+- Clearly identify the most important improvements needed.
 - Return strict JSON only.
-- If image quality is limited, lower confidence and mention the limitation.
-- Use concise field values.
 """.strip()
 
 
 @dataclass
-class InspectionResult:
-    image_name: str
+class BatchInspectionResult:
     project_name: str
-    work_type: str
+    image_names: list[str]
     overall_score: int
     quality_level: str
-    summary: str
-    observations: list[str]
-    risks: list[str]
-    recommended_actions: list[str]
+    executive_summary: str
+    strengths: list[str]
+    concerns: list[str]
+    key_improvements: list[str]
+    image_findings: list[dict[str, str]]
     confidence: str
     limitations: list[str]
 
     def normalized(self) -> dict[str, Any]:
         return {
-            "image_name": self.image_name,
             "project_name": self.project_name,
-            "work_type": self.work_type,
+            "image_names": self.image_names,
             "overall_score": self.overall_score,
             "quality_level": self.quality_level,
-            "summary": self.summary,
-            "observations": self.observations,
-            "risks": self.risks,
-            "recommended_actions": self.recommended_actions,
+            "executive_summary": self.executive_summary,
+            "strengths": self.strengths,
+            "concerns": self.concerns,
+            "key_improvements": self.key_improvements,
+            "image_findings": self.image_findings,
             "confidence": self.confidence,
             "limitations": self.limitations,
         }
-
-
-def default_result(image_name: str, project_name: str, work_type: str, message: str) -> InspectionResult:
-    return InspectionResult(
-        image_name=image_name,
-        project_name=project_name,
-        work_type=work_type,
-        overall_score=0,
-        quality_level="Critical",
-        summary=message,
-        observations=[message],
-        risks=["Analysis did not complete successfully."],
-        recommended_actions=["Retry the upload or review the API configuration."],
-        confidence="Low",
-        limitations=["No AI assessment was produced."],
-    )
 
 
 def clean_list(value: Any, fallback: str, limit: int = 4) -> list[str]:
@@ -156,33 +127,58 @@ def parse_json_response(raw_text: str) -> dict[str, Any]:
         return json.loads(match.group(0))
 
 
-def normalize_result(
-    image_name: str,
-    project_name: str,
-    work_type: str,
-    payload: dict[str, Any],
-) -> InspectionResult:
+def normalize_image_findings(value: Any, image_names: list[str]) -> list[dict[str, str]]:
+    findings: list[dict[str, str]] = []
+    if isinstance(value, list):
+        for item in value:
+            if isinstance(item, dict):
+                image_name = str(item.get("image_name") or "").strip()
+                note = str(item.get("finding") or "").strip()
+                if image_name and note:
+                    findings.append({"image_name": image_name, "finding": note})
+    if findings:
+        return findings[: len(image_names)]
+    return [{"image_name": name, "finding": "No separate image note returned."} for name in image_names]
+
+
+def normalize_result(project_name: str, image_names: list[str], payload: dict[str, Any]) -> BatchInspectionResult:
     score = clamp_score(payload.get("overall_score"))
-    return InspectionResult(
-        image_name=image_name,
+    return BatchInspectionResult(
         project_name=project_name.strip() or "Untitled project",
-        work_type=work_type.strip() or "General construction",
+        image_names=image_names,
         overall_score=score,
         quality_level=normalize_quality_level(payload.get("quality_level"), score),
-        summary=str(payload.get("summary") or "No summary returned.").strip(),
-        observations=clean_list(payload.get("observations"), "No observations returned."),
-        risks=clean_list(payload.get("risks"), "No specific risks identified.", limit=3),
-        recommended_actions=clean_list(
-            payload.get("recommended_actions"),
-            "Capture clearer images and review the area on site.",
-            limit=3,
+        executive_summary=str(payload.get("executive_summary") or "No summary returned.").strip(),
+        strengths=clean_list(payload.get("strengths"), "No strengths returned."),
+        concerns=clean_list(payload.get("concerns"), "No concerns returned."),
+        key_improvements=clean_list(
+            payload.get("key_improvements"),
+            "No key improvements returned.",
+            limit=5,
         ),
+        image_findings=normalize_image_findings(payload.get("image_findings"), image_names),
         confidence=normalize_confidence(payload.get("confidence")),
         limitations=clean_list(
             payload.get("limitations"),
-            "This review is based only on visible conditions in the photo.",
-            limit=2,
+            "This review is based only on visible conditions in the uploaded photos.",
+            limit=3,
         ),
+    )
+
+
+def default_result(project_name: str, image_names: list[str], message: str) -> BatchInspectionResult:
+    return BatchInspectionResult(
+        project_name=project_name,
+        image_names=image_names,
+        overall_score=0,
+        quality_level="Critical",
+        executive_summary=message,
+        strengths=["No analysis was completed."],
+        concerns=["Analysis did not complete successfully."],
+        key_improvements=["Retry the upload or review the API configuration."],
+        image_findings=[{"image_name": name, "finding": message} for name in image_names],
+        confidence="Low",
+        limitations=["No AI assessment was produced."],
     )
 
 
@@ -193,40 +189,54 @@ def encode_image(uploaded_file: Any) -> str:
     return f"data:{mime_type};base64,{encoded}"
 
 
-def build_image_prompt(image_name: str, project_name: str, work_type: str, inspection_brief: str) -> str:
-    extra_brief = inspection_brief.strip() or "Focus on overall workmanship, finish quality, and visible defects."
+def build_batch_prompt(project_name: str, image_names: list[str], inspection_brief: str) -> str:
+    extra_brief = inspection_brief.strip() or "Focus on workmanship, visible defects, finishes, alignment, curing, and housekeeping."
     schema = {
-        "image_name": image_name,
         "project_name": project_name,
-        "work_type": work_type,
         "overall_score": "integer from 0 to 100",
         "quality_level": "Excellent | Good | Fair | Poor | Critical",
-        "summary": "one short paragraph under 50 words",
-        "observations": ["up to 4 short bullet-style strings"],
-        "risks": ["up to 3 short bullet-style strings"],
-        "recommended_actions": ["up to 3 short bullet-style strings"],
+        "executive_summary": "short paragraph under 70 words",
+        "strengths": ["up to 4 short strings"],
+        "concerns": ["up to 5 short strings"],
+        "key_improvements": ["up to 5 short strings ordered by priority"],
+        "image_findings": [
+            {
+                "image_name": "one of the uploaded image names",
+                "finding": "one short image-specific note",
+            }
+        ],
         "confidence": "High | Medium | Low",
-        "limitations": ["1 or 2 short strings"],
+        "limitations": ["1 to 3 short strings"],
     }
     return (
-        f"Inspect the construction-site image named '{image_name}'. "
-        f"Project name: {project_name}. "
-        f"Type of work: {work_type}. "
+        f"Inspect this batch of construction-site photos for the project '{project_name}'. "
+        f"The uploaded image names are: {', '.join(image_names)}. "
         f"Additional inspection brief: {extra_brief}\n\n"
+        "Analyze the full batch as one project report. If only one image is uploaded, base the full report on that single image. "
+        "Be explicit about the most important improvements that should be made.\n\n"
         "Return a strict JSON object that follows this schema exactly:\n"
         f"{json.dumps(schema, indent=2)}"
     )
 
 
-def analyze_image(
+def analyze_batch(
     client: OpenAI,
     model: str,
-    uploaded_file: Any,
+    uploaded_files: list[Any],
     project_name: str,
-    work_type: str,
     inspection_brief: str,
-) -> InspectionResult:
+) -> BatchInspectionResult:
+    image_names = [file.name for file in uploaded_files]
     try:
+        content: list[dict[str, str]] = [
+            {
+                "type": "input_text",
+                "text": build_batch_prompt(project_name, image_names, inspection_brief),
+            }
+        ]
+        for uploaded_file in uploaded_files:
+            content.append({"type": "input_image", "image_url": encode_image(uploaded_file)})
+
         response = client.responses.create(
             model=model,
             input=[
@@ -236,105 +246,46 @@ def analyze_image(
                 },
                 {
                     "role": "user",
-                    "content": [
-                        {
-                            "type": "input_text",
-                            "text": build_image_prompt(
-                                uploaded_file.name,
-                                project_name,
-                                work_type,
-                                inspection_brief,
-                            ),
-                        },
-                        {"type": "input_image", "image_url": encode_image(uploaded_file)},
-                    ],
+                    "content": content,
                 },
             ],
         )
         payload = parse_json_response(response.output_text)
-        return normalize_result(uploaded_file.name, project_name, work_type, payload)
+        return normalize_result(project_name, image_names, payload)
     except Exception as exc:
-        return default_result(uploaded_file.name, project_name, work_type, f"Analysis failed: {exc}")
+        return default_result(project_name, image_names, f"Analysis failed: {exc}")
 
 
-def summarize_site(
-    client: OpenAI,
-    model: str,
-    reports: list[InspectionResult],
-    inspection_brief: str,
-) -> dict[str, Any]:
-    average_score = round(sum(report.overall_score for report in reports) / len(reports))
-    fallback = {
-        "average_score": average_score,
-        "site_quality": normalize_quality_level(None, average_score),
-        "executive_summary": "Site summary generated from the per-image scores only.",
-        "priority_actions": [
-            "Review the lowest-scoring images first.",
-            "Validate issues on site before taking corrective action.",
-            "Capture follow-up photos after rework.",
-        ],
-        "common_themes": ["Mixed visible quality across uploaded images."],
-    }
+def make_pdf_image(image_bytes: bytes, image_name: str) -> list[Any]:
+    image_buffer = BytesIO(image_bytes)
+    reader = ImageReader(image_buffer)
+    original_width, original_height = reader.getSize()
+    max_width = 82 * mm
+    max_height = 58 * mm
+    scale = min(max_width / original_width, max_height / original_height)
+    pdf_image = RLImage(image_buffer, width=original_width * scale, height=original_height * scale)
 
-    try:
-        summary_prompt = {
-            "inspection_brief": inspection_brief.strip() or "General quality review",
-            "reports": [report.normalized() for report in reports],
-            "output_schema": {
-                "average_score": "integer 0 to 100",
-                "site_quality": "Excellent | Good | Fair | Poor | Critical",
-                "executive_summary": "2 sentence site overview",
-                "priority_actions": ["up to 4 short strings"],
-                "common_themes": ["up to 4 short strings"],
-            },
-        }
-        response = client.responses.create(
-            model=model,
-            input=[
-                {
-                    "role": "system",
-                    "content": [
-                        {
-                            "type": "input_text",
-                            "text": (
-                                "You summarize construction-photo inspection results. "
-                                "Only use the report data provided. Return strict JSON only."
-                            ),
-                        }
-                    ],
-                },
-                {
-                    "role": "user",
-                    "content": [{"type": "input_text", "text": json.dumps(summary_prompt, indent=2)}],
-                },
-            ],
-        )
-        payload = parse_json_response(response.output_text)
-        score = clamp_score(payload.get("average_score", average_score))
-        return {
-            "average_score": score,
-            "site_quality": normalize_quality_level(payload.get("site_quality"), score),
-            "executive_summary": str(payload.get("executive_summary") or fallback["executive_summary"]).strip(),
-            "priority_actions": clean_list(
-                payload.get("priority_actions"),
-                fallback["priority_actions"][0],
-                limit=4,
-            ),
-            "common_themes": clean_list(payload.get("common_themes"), fallback["common_themes"][0]),
-        }
-    except Exception:
-        return fallback
+    styles = getSampleStyleSheet()
+    caption_style = ParagraphStyle(
+        "ImageCaption",
+        parent=styles["BodyText"],
+        alignment=1,
+        fontSize=8.5,
+        textColor=colors.HexColor("#425466"),
+        spaceBefore=4,
+    )
+    return [pdf_image, Spacer(1, 3), Paragraph(image_name, caption_style)]
 
 
-def build_pdf_report(report: InspectionResult) -> bytes:
+def build_pdf_report(result: BatchInspectionResult, image_assets: list[dict[str, Any]]) -> bytes:
     buffer = BytesIO()
     doc = SimpleDocTemplate(
         buffer,
         pagesize=A4,
-        leftMargin=18 * mm,
-        rightMargin=18 * mm,
-        topMargin=18 * mm,
-        bottomMargin=18 * mm,
+        leftMargin=16 * mm,
+        rightMargin=16 * mm,
+        topMargin=16 * mm,
+        bottomMargin=16 * mm,
     )
     styles = getSampleStyleSheet()
     title_style = styles["Title"]
@@ -362,18 +313,17 @@ def build_pdf_report(report: InspectionResult) -> bytes:
         bulletIndent=0,
     )
 
-    score_table = Table(
+    summary_table = Table(
         [
-            ["Project", report.project_name],
-            ["Work type", report.work_type],
-            ["Image", report.image_name],
-            ["Quality level", report.quality_level],
-            ["Score", f"{report.overall_score}/100"],
-            ["Confidence", report.confidence],
+            ["Project", result.project_name],
+            ["Images reviewed", str(len(result.image_names))],
+            ["Quality level", result.quality_level],
+            ["Score", f"{result.overall_score}/100"],
+            ["Confidence", result.confidence],
         ],
-        colWidths=[38 * mm, 126 * mm],
+        colWidths=[40 * mm, 130 * mm],
     )
-    score_table.setStyle(
+    summary_table.setStyle(
         TableStyle(
             [
                 ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#eaf2f8")),
@@ -387,30 +337,65 @@ def build_pdf_report(report: InspectionResult) -> bytes:
         )
     )
 
-    story = [
-        Paragraph("Construction Quality Report", title_style),
-        Spacer(1, 5),
-        score_table,
+    story: list[Any] = [
+        Paragraph("Construction Quality Batch Report", title_style),
+        Spacer(1, 6),
+        summary_table,
         Spacer(1, 12),
-        Paragraph("Summary", heading_style),
-        Paragraph(report.summary, body_style),
-        Paragraph("Observations", heading_style),
+        Paragraph("Executive Summary", heading_style),
+        Paragraph(result.executive_summary, body_style),
+        Paragraph("What Is Working Well", heading_style),
     ]
 
-    for item in report.observations:
+    for item in result.strengths:
         story.append(Paragraph(item, bullet_style, bulletText="-"))
 
-    story.append(Paragraph("Risks", heading_style))
-    for item in report.risks:
+    story.append(Paragraph("Key Concerns", heading_style))
+    for item in result.concerns:
         story.append(Paragraph(item, bullet_style, bulletText="-"))
 
-    story.append(Paragraph("Recommended Actions", heading_style))
-    for item in report.recommended_actions:
+    story.append(Paragraph("Priority Improvements", heading_style))
+    for item in result.key_improvements:
         story.append(Paragraph(item, bullet_style, bulletText="-"))
+
+    story.append(Paragraph("Image Notes", heading_style))
+    for item in result.image_findings:
+        story.append(
+            Paragraph(
+                f"<b>{item['image_name']}</b>: {item['finding']}",
+                body_style,
+            )
+        )
 
     story.append(Paragraph("Limitations", heading_style))
-    for item in report.limitations:
+    for item in result.limitations:
         story.append(Paragraph(item, bullet_style, bulletText="-"))
+
+    if image_assets:
+        story.append(Paragraph("Photo Record", heading_style))
+        image_cells: list[list[Any]] = []
+        row: list[Any] = []
+        for asset in image_assets:
+            row.append(make_pdf_image(asset["bytes"], asset["name"]))
+            if len(row) == 2:
+                image_cells.append(row)
+                row = []
+        if row:
+            row.append("")
+            image_cells.append(row)
+
+        image_table = Table(image_cells, colWidths=[86 * mm, 86 * mm], hAlign="LEFT")
+        image_table.setStyle(
+            TableStyle(
+                [
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("BOX", (0, 0), (-1, -1), 0.4, colors.HexColor("#d6dee6")),
+                    ("INNERGRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#d6dee6")),
+                    ("PADDING", (0, 0), (-1, -1), 8),
+                ]
+            )
+        )
+        story.append(image_table)
 
     doc.build(story)
     buffer.seek(0)
@@ -436,8 +421,8 @@ def quality_badge(level: str) -> str:
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 st.title(APP_TITLE)
 st.caption(
-    "Upload construction-site photos and generate AI-assisted quality reports for each image, "
-    "plus an overall site summary."
+    "Upload one or more photos from the same project. The app will analyze the full batch together "
+    "and generate one project report."
 )
 
 with st.sidebar:
@@ -445,7 +430,7 @@ with st.sidebar:
     model = st.selectbox("Model", MODEL_OPTIONS, index=MODEL_OPTIONS.index(DEFAULT_MODEL))
     inspection_brief = st.text_area(
         "Inspection focus",
-        value="Check workmanship, finishing quality, visible defects, curing, alignment, and housekeeping.",
+        value="Check workmanship, visible defects, finish quality, alignment, curing, and housekeeping.",
         help="Optional guidance for the AI on what to focus on.",
     )
     st.info(
@@ -454,182 +439,92 @@ with st.sidebar:
     )
 
 api_key = os.getenv("OPENAI_API_KEY", "").strip()
+if not api_key:
+    st.warning("OpenAI API key not found in the environment. Add `OPENAI_API_KEY` to the repo root `.env` file.")
 
+project_name = st.text_input("Project name", placeholder="e.g. SRMD Tower A Podium")
 uploaded_files = st.file_uploader(
-    "Upload construction photos",
+    "Upload project photos",
     type=["jpg", "jpeg", "png", "webp"],
     accept_multiple_files=True,
-    help="You can upload several images and generate a separate report for each one.",
+    help="Upload one photo or a group of photos from the same project batch.",
 )
 
 uploaded_names = tuple(file.name for file in uploaded_files) if uploaded_files else ()
 if st.session_state.get("uploaded_names") != uploaded_names:
     st.session_state["uploaded_names"] = uploaded_names
-    st.session_state.pop("inspection_reports", None)
-    st.session_state.pop("site_summary", None)
+    st.session_state.pop("batch_report", None)
 
-if not api_key:
-    st.warning("OpenAI API key not found in the environment. Add `OPENAI_API_KEY` to the repo root `.env` file.")
-
-analyze_clicked = st.button("Analyze Photos", type="primary", disabled=not uploaded_files or not api_key)
+analyze_clicked = st.button("Analyze Project Batch", type="primary", disabled=not uploaded_files or not api_key)
 
 if not uploaded_files:
-    st.write("Add a few site photos to begin the inspection.")
+    st.write("Add one or more project photos to begin the batch inspection.")
 
 if uploaded_files:
-    st.subheader("Uploaded Images")
+    st.subheader("Uploaded Project Photos")
     preview_columns = st.columns(min(3, len(uploaded_files)))
     for index, uploaded_file in enumerate(uploaded_files):
         with preview_columns[index % len(preview_columns)]:
             st.image(uploaded_file, caption=uploaded_file.name, use_container_width=True)
 
-    st.subheader("Image Details")
-    st.caption("Add project context for each image before running the analysis.")
-    for uploaded_file in uploaded_files:
-        with st.container(border=True):
-            st.write(uploaded_file.name)
-            st.text_input(
-                "Project name",
-                key=f"project_name::{uploaded_file.name}",
-                placeholder="e.g. Tower A Podium Deck",
-            )
-            selected_work_type = st.selectbox(
-                "Type of work",
-                WORK_TYPE_OPTIONS,
-                key=f"work_type::{uploaded_file.name}",
-            )
-            if selected_work_type == "Other":
-                st.text_input(
-                    "Custom work type",
-                    key=f"work_type_custom::{uploaded_file.name}",
-                    placeholder="Describe the work type",
-                )
-
 if analyze_clicked:
-    missing_context: list[str] = []
-    image_context: dict[str, dict[str, str]] = {}
-    for uploaded_file in uploaded_files:
-        project_name = st.session_state.get(f"project_name::{uploaded_file.name}", "").strip()
-        work_type = st.session_state.get(f"work_type::{uploaded_file.name}", "").strip()
-        if work_type == "Other":
-            work_type = st.session_state.get(f"work_type_custom::{uploaded_file.name}", "").strip()
-
-        if not project_name or not work_type:
-            missing_context.append(uploaded_file.name)
-            continue
-
-        image_context[uploaded_file.name] = {
-            "project_name": project_name,
-            "work_type": work_type,
-        }
-
-    if missing_context:
-        st.error(
-            "Please add a project name and work type for each uploaded image before analyzing: "
-            + ", ".join(missing_context)
-        )
+    if not project_name.strip():
+        st.error("Please enter a project name for this batch before analyzing.")
         st.stop()
 
     client = OpenAI(api_key=api_key)
-    progress_bar = st.progress(0)
-    reports: list[InspectionResult] = []
+    with st.spinner("Analyzing the uploaded project batch..."):
+        result = analyze_batch(client, model, list(uploaded_files), project_name.strip(), inspection_brief)
+    st.session_state["batch_report"] = result.normalized()
 
-    for index, uploaded_file in enumerate(uploaded_files, start=1):
-        context = image_context[uploaded_file.name]
-        reports.append(
-            analyze_image(
-                client,
-                model,
-                uploaded_file,
-                context["project_name"],
-                context["work_type"],
-                inspection_brief,
-            )
-        )
-        progress_bar.progress(index / len(uploaded_files))
+batch_report_data = st.session_state.get("batch_report")
+if batch_report_data:
+    result = normalize_result(
+        batch_report_data.get("project_name", project_name.strip()),
+        batch_report_data.get("image_names", list(uploaded_names)),
+        batch_report_data,
+    )
 
-    site_summary = summarize_site(client, model, reports, inspection_brief)
-    st.session_state["inspection_reports"] = [report.normalized() for report in reports]
-    st.session_state["site_summary"] = site_summary
-    progress_bar.empty()
+    metric_col, badge_col, image_col = st.columns(3)
+    metric_col.metric("Project Score", f"{result.overall_score}/100")
+    badge_col.write("Quality Level")
+    badge_col.markdown(quality_badge(result.quality_level), unsafe_allow_html=True)
+    image_col.metric("Images Reviewed", len(result.image_names))
 
-reports_data = st.session_state.get("inspection_reports")
-site_summary = st.session_state.get("site_summary")
+    st.subheader("Executive Summary")
+    st.write(result.executive_summary)
 
-if reports_data and site_summary:
-    reports = [
-        normalize_result(
-            item["image_name"],
-            item.get("project_name", ""),
-            item.get("work_type", ""),
-            item,
-        )
-        for item in reports_data
+    left_col, right_col = st.columns(2)
+    with left_col:
+        st.write("What is working well")
+        for item in result.strengths:
+            st.write(f"- {item}")
+        st.write("Key concerns")
+        for item in result.concerns:
+            st.write(f"- {item}")
+    with right_col:
+        st.write("Priority improvements")
+        for item in result.key_improvements:
+            st.write(f"- {item}")
+        st.write("Limitations")
+        for item in result.limitations:
+            st.write(f"- {item}")
+        st.caption(f"Confidence: {result.confidence}")
+
+    st.subheader("Image Notes")
+    for item in result.image_findings:
+        st.write(f"- **{item['image_name']}**: {item['finding']}")
+
+    pdf_assets = [
+        {"name": uploaded_file.name, "bytes": uploaded_file.getvalue()}
+        for uploaded_file in uploaded_files
+        if uploaded_file.name in result.image_names
     ]
-
-    score_col, quality_col, images_col = st.columns(3)
-    score_col.metric("Average Site Score", f"{site_summary['average_score']}/100")
-    quality_col.write("Site Quality")
-    quality_col.markdown(quality_badge(site_summary["site_quality"]), unsafe_allow_html=True)
-    images_col.metric("Images Reviewed", len(reports))
-
-    st.subheader("Site Summary")
-    st.write(site_summary["executive_summary"])
-
-    summary_col, actions_col = st.columns(2)
-    with summary_col:
-        st.write("Common themes")
-        for theme in site_summary["common_themes"]:
-            st.write(f"- {theme}")
-    with actions_col:
-        st.write("Priority actions")
-        for action in site_summary["priority_actions"]:
-            st.write(f"- {action}")
-
-    st.subheader("Per-Image Reports")
-    for report in reports:
-        with st.container(border=True):
-            header_col, score_col = st.columns([4, 1])
-            with header_col:
-                st.markdown(f"### {report.image_name}")
-                st.caption(f"Project: {report.project_name} | Work type: {report.work_type}")
-                st.markdown(quality_badge(report.quality_level), unsafe_allow_html=True)
-            with score_col:
-                st.metric("Score", f"{report.overall_score}/100")
-
-            image_match = next(
-                (uploaded_file for uploaded_file in uploaded_files if uploaded_file.name == report.image_name),
-                None,
-            )
-            if image_match is not None:
-                st.image(image_match, use_container_width=True)
-
-            st.write(report.summary)
-            detail_col_1, detail_col_2 = st.columns(2)
-            with detail_col_1:
-                st.write("Observations")
-                for item in report.observations:
-                    st.write(f"- {item}")
-                st.write("Risks")
-                for item in report.risks:
-                    st.write(f"- {item}")
-            with detail_col_2:
-                st.write("Recommended actions")
-                for item in report.recommended_actions:
-                    st.write(f"- {item}")
-                st.write("Limitations")
-                for item in report.limitations:
-                    st.write(f"- {item}")
-                st.caption(f"Confidence: {report.confidence}")
-                pdf_bytes = build_pdf_report(report)
-                st.download_button(
-                    "Download PDF Report",
-                    data=pdf_bytes,
-                    file_name=(
-                        f"{sanitize_filename(report.project_name)}_"
-                        f"{sanitize_filename(report.image_name)}_quality_report.pdf"
-                    ),
-                    mime="application/pdf",
-                    key=f"pdf::{report.image_name}",
-                    use_container_width=True,
-                )
+    pdf_bytes = build_pdf_report(result, pdf_assets)
+    st.download_button(
+        "Download Project PDF Report",
+        data=pdf_bytes,
+        file_name=f"{sanitize_filename(result.project_name)}_construction_quality_report.pdf",
+        mime="application/pdf",
+        use_container_width=True,
+    )
