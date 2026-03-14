@@ -442,12 +442,6 @@ st.caption(
 
 with st.sidebar:
     st.header("Analysis Settings")
-    api_key = st.text_input(
-        "OpenAI API key",
-        value=os.getenv("OPENAI_API_KEY", ""),
-        type="password",
-        help="Loaded from the repo root environment when available.",
-    )
     model = st.selectbox("Model", MODEL_OPTIONS, index=MODEL_OPTIONS.index(DEFAULT_MODEL))
     inspection_brief = st.text_area(
         "Inspection focus",
@@ -458,6 +452,8 @@ with st.sidebar:
         "This tool assesses only visible conditions in the uploaded photos. "
         "It is a site-review assistant, not a substitute for a licensed engineer or inspector."
     )
+
+api_key = os.getenv("OPENAI_API_KEY", "").strip()
 
 uploaded_files = st.file_uploader(
     "Upload construction photos",
@@ -471,6 +467,9 @@ if st.session_state.get("uploaded_names") != uploaded_names:
     st.session_state["uploaded_names"] = uploaded_names
     st.session_state.pop("inspection_reports", None)
     st.session_state.pop("site_summary", None)
+
+if not api_key:
+    st.warning("OpenAI API key not found in the environment. Add `OPENAI_API_KEY` to the repo root `.env` file.")
 
 analyze_clicked = st.button("Analyze Photos", type="primary", disabled=not uploaded_files or not api_key)
 
