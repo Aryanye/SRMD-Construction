@@ -19,6 +19,7 @@ APP_TITLE = "SRMD MOM Generator"
 DEFAULT_MODEL = "gpt-5.1"
 MODEL_OPTIONS = ["gpt-5.1", "gpt-5-mini", "gpt-4.1"]
 PROJECT_OPTIONS = ["Vinay-Vivek", "NGH-A", "NGH-B", "NGH-C", "P2", "SRAH", "RU"]
+NGH_PROJECT_OPTIONS = ["NGH-A", "NGH-B", "NGH-C"]
 MANUAL_PROJECT_OPTION = "Other (Enter manually)"
 PROJECT_SELECTION_OPTIONS = ["Select project"] + PROJECT_OPTIONS + [MANUAL_PROJECT_OPTION]
 DEFAULT_TEMPLATE_PATH = "mom_app/SRMD MOM Format.xlsx"
@@ -120,11 +121,18 @@ def unique_nonempty(values: list[str]) -> list[str]:
 
 def set_project_state(project_name: str) -> None:
     project_name = project_name.strip()
-    if project_name in PROJECT_OPTIONS:
+    parsed_gh_projects = [option for option in NGH_PROJECT_OPTIONS if option.lower() in project_name.lower()]
+    if parsed_gh_projects:
+        st.session_state["project_name_select"] = parsed_gh_projects[0]
+        st.session_state["project_name_ngh_multi"] = parsed_gh_projects
+        st.session_state["project_name_custom_input"] = ""
+    elif project_name in PROJECT_OPTIONS:
         st.session_state["project_name_select"] = project_name
+        st.session_state["project_name_ngh_multi"] = []
         st.session_state["project_name_custom_input"] = ""
     elif project_name:
         st.session_state["project_name_select"] = MANUAL_PROJECT_OPTION
+        st.session_state["project_name_ngh_multi"] = []
         st.session_state["project_name_custom_input"] = project_name
 
 
@@ -539,6 +547,7 @@ def run_app() -> None:
                 st.warning(f"Could not read the uploaded MOM Excel file: {exc}")
 
         st.session_state.setdefault("project_name_select", "Select project")
+        st.session_state.setdefault("project_name_ngh_multi", [])
         st.session_state.setdefault("project_name_custom_input", "")
         st.session_state.setdefault("meeting_title_input", "Site Visit Meeting")
 
@@ -548,7 +557,16 @@ def run_app() -> None:
             key="project_name_select",
         )
         project_name = selected_project_name
-        if selected_project_name == MANUAL_PROJECT_OPTION:
+        if selected_project_name in NGH_PROJECT_OPTIONS:
+            default_ngh_projects = st.session_state.get("project_name_ngh_multi") or [selected_project_name]
+            selected_ngh_projects = st.multiselect(
+                "Select NGH projects",
+                NGH_PROJECT_OPTIONS,
+                default=default_ngh_projects,
+                key="project_name_ngh_multi",
+            )
+            project_name = ", ".join(selected_ngh_projects)
+        elif selected_project_name == MANUAL_PROJECT_OPTION:
             project_name = st.text_input(
                 "Manual project name",
                 key="project_name_custom_input",
