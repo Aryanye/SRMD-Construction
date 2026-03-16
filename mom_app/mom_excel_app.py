@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 from typing import Any
 
+import pandas as pd
 from openai import OpenAI
 from openpyxl import load_workbook
 from openpyxl.cell.cell import MergedCell
@@ -47,6 +48,12 @@ Rules:
 - Split the discussion into clear action-oriented points.
 - Return strict JSON only.
 - If a field is genuinely unclear, use a sensible placeholder instead of leaving it blank.
+- Infer action status from language cues: "completed", "done", "closed", "approved" → "Closed";
+  "pending", "yet to", "not done" → "Open"; "in progress", "partially done", "ongoing" → "In Progress";
+  "deferred", "postponed", "on hold" → "Deferred". Default to "Open" if unclear.
+- Extract responsible_party and target_date when the notes mention them (e.g. "XYZ to submit by 20 March"
+  → responsible_party: "XYZ", target_date: "20 March"). Use empty strings when not mentioned.
+- If the notes mention a next meeting date or place, populate next_meeting_date and next_meeting_place.
 """.strip()
 
 
@@ -55,6 +62,9 @@ class DiscussionPoint:
     point_of_discussion: str
     discipline_of_work: str
     conclusion_or_remark: str
+    responsible_party: str = ""
+    target_date: str = ""
+    status: str = "Open"
 
 
 @dataclass
@@ -65,6 +75,9 @@ class MeetingRecord:
     place: str
     attendees: list[str]
     discussion_points: list[DiscussionPoint]
+    mom_number: str = ""
+    next_meeting_date: str = ""
+    next_meeting_place: str = ""
 
 
 @dataclass
@@ -285,6 +298,13 @@ def extract_existing_mom_context(uploaded_file: Any) -> ExistingMomContext:
     )
 
 
+_VALID_STATUSES = {"Open", "In Progress", "Closed", "Deferred"}
+
+
+def _validate_status(value: str) -> str:
+    return value if value in _VALID_STATUSES else "Open"
+
+
 def infer_discipline(text: str) -> str:
     lowered = text.lower()
     mapping = {
@@ -310,16 +330,34 @@ def heuristic_discussion_points(notes: str) -> list[DiscussionPoint]:
         normalized = re.sub(r"^\d+[\).:-]?\s*", "", line).strip()
         if not normalized:
             continue
+
+        lowered = normalized.lower()
         conclusion = "Review on site and close the action as discussed."
-        if any(token in normalized.lower() for token in ["approved", "completed", "closed"]):
+        status = "Open"
+        if any(token in lowered for token in ["approved", "completed", "closed", "done"]):
             conclusion = "Noted as completed / accepted during the meeting."
-        elif any(token in normalized.lower() for token in ["provide", "submit", "share", "revise", "rectify"]):
+            status = "Closed"
+        elif any(token in lowered for token in ["in progress", "partially", "ongoing"]):
+            status = "In Progress"
+        elif any(token in lowered for token in ["deferred", "postponed", "on hold"]):
+            status = "Deferred"
+        elif any(token in lowered for token in ["provide", "submit", "share", "revise", "rectify"]):
             conclusion = "Concerned team to take action and update in the next review."
+
+        party_match = re.search(r"\b([A-Z][a-z]+(?: [A-Z][a-z]+)*)\s+to\s+\w", normalized)
+        responsible_party = party_match.group(1) if party_match else ""
+
+        date_match = re.search(r"\bby\s+(\d{1,2}\s+\w+(?:\s+\d{4})?)", normalized, re.IGNORECASE)
+        target_date = date_match.group(1) if date_match else ""
+
         points.append(
             DiscussionPoint(
                 point_of_discussion=normalized,
                 discipline_of_work=infer_discipline(normalized),
                 conclusion_or_remark=conclusion,
+                responsible_party=responsible_party,
+                target_date=target_date,
+                status=status,
             )
         )
 
@@ -339,6 +377,9 @@ def heuristic_meeting_record(
     place: str,
     attendees_text: str,
     notes: str,
+    mom_number: str = "",
+    next_meeting_date: str = "",
+    next_meeting_place: str = "",
 ) -> MeetingRecord:
     attendees = unique_nonempty(clean_lines(attendees_text) + extract_attendees_from_text(attendees_text, notes))
     return MeetingRecord(
@@ -348,6 +389,9 @@ def heuristic_meeting_record(
         place=sanitize_text(place, "Place to be confirmed"),
         attendees=attendees or ["Attendee details to be confirmed from the meeting notes."],
         discussion_points=heuristic_discussion_points(notes),
+        mom_number=mom_number.strip(),
+        next_meeting_date=next_meeting_date.strip(),
+        next_meeting_place=next_meeting_place.strip(),
     )
 
 
@@ -359,6 +403,9 @@ def build_prompt(
     attendees_text: str,
     notes: str,
     extra_context: str,
+    mom_number: str = "",
+    next_meeting_date: str = "",
+    next_meeting_place: str = "",
 ) -> str:
     payload = {
         "user_inputs": {
@@ -367,6 +414,9 @@ def build_prompt(
             "meeting_date": meeting_date.strip(),
             "place": place.strip(),
             "attendees": clean_lines(attendees_text),
+            "mom_number": mom_number.strip(),
+            "next_meeting_date": next_meeting_date.strip(),
+            "next_meeting_place": next_meeting_place.strip(),
         },
         "extra_context": extra_context.strip(),
         "meeting_notes": notes.strip(),
@@ -376,11 +426,17 @@ def build_prompt(
             "meeting_date": "string",
             "place": "string",
             "attendees": ["short attendee strings"],
+            "mom_number": "use the user-supplied value as-is",
+            "next_meeting_date": "next meeting date if mentioned in notes, else empty string",
+            "next_meeting_place": "next meeting place if mentioned in notes, else empty string",
             "discussion_points": [
                 {
                     "point_of_discussion": "string under 180 characters",
                     "discipline_of_work": "short label like Civil / MEP / Architecture / Safety / Planning / General",
                     "conclusion_or_remark": "string under 160 characters",
+                    "responsible_party": "name or team responsible, empty string if not mentioned",
+                    "target_date": "target completion date, empty string if not mentioned",
+                    "status": "Open | In Progress | Closed | Deferred",
                 }
             ],
         },
@@ -406,6 +462,9 @@ def normalize_meeting_record(payload: dict[str, Any]) -> MeetingRecord:
                         item.get("conclusion_or_remark"),
                         "Action owner to review and update.",
                     ),
+                    responsible_party=str(item.get("responsible_party") or "").strip(),
+                    target_date=str(item.get("target_date") or "").strip(),
+                    status=_validate_status(str(item.get("status") or "Open").strip()),
                 )
             )
 
@@ -428,6 +487,9 @@ def normalize_meeting_record(payload: dict[str, Any]) -> MeetingRecord:
                 conclusion_or_remark="Action owners to align and issue an updated status after the meeting.",
             )
         ],
+        mom_number=str(payload.get("mom_number") or "").strip(),
+        next_meeting_date=str(payload.get("next_meeting_date") or "").strip(),
+        next_meeting_place=str(payload.get("next_meeting_place") or "").strip(),
     )
 
 
@@ -441,6 +503,9 @@ def generate_meeting_record(
     attendees_text: str,
     notes: str,
     extra_context: str,
+    mom_number: str = "",
+    next_meeting_date: str = "",
+    next_meeting_place: str = "",
 ) -> MeetingRecord:
     fallback = heuristic_meeting_record(
         project_name=project_name,
@@ -449,6 +514,9 @@ def generate_meeting_record(
         place=place,
         attendees_text=attendees_text,
         notes=notes,
+        mom_number=mom_number,
+        next_meeting_date=next_meeting_date,
+        next_meeting_place=next_meeting_place,
     )
     if not api_key:
         return fallback
@@ -463,11 +531,22 @@ def generate_meeting_record(
             },
             {
                 "role": "user",
-                "content": [{"type": "input_text", "text": build_prompt(project_name, meeting_title, meeting_date, place, attendees_text, notes, extra_context)}],
+                "content": [{"type": "input_text", "text": build_prompt(
+                    project_name, meeting_title, meeting_date, place, attendees_text,
+                    notes, extra_context, mom_number, next_meeting_date, next_meeting_place,
+                )}],
             },
         ],
     )
-    return normalize_meeting_record(parse_json_response(response.output_text))
+    record = normalize_meeting_record(parse_json_response(response.output_text))
+    # User-supplied values always override AI inference
+    if mom_number:
+        record.mom_number = mom_number
+    if next_meeting_date:
+        record.next_meeting_date = next_meeting_date
+    if next_meeting_place:
+        record.next_meeting_place = next_meeting_place
+    return record
 
 
 def template_bytes() -> bytes:
@@ -543,6 +622,21 @@ def fill_attendees(ws: Any, attendees: list[str]) -> None:
             )
 
 
+def build_conclusion_cell_text(point: DiscussionPoint) -> str:
+    parts: list[str] = []
+    if point.status and point.status != "Open":
+        parts.append(f"[{point.status}]")
+    parts.append(point.conclusion_or_remark)
+    suffix_parts: list[str] = []
+    if point.responsible_party:
+        suffix_parts.append(f"Owner: {point.responsible_party}")
+    if point.target_date:
+        suffix_parts.append(f"Due: {point.target_date}")
+    if suffix_parts:
+        parts.append(" | ".join(suffix_parts))
+    return " ".join(parts).strip()
+
+
 def fill_discussion_table(ws: Any, discussion_points: list[DiscussionPoint]) -> None:
     points = discussion_points[:25]
     extra_rows = max(0, len(points) - BASE_DISCUSSION_ROWS)
@@ -553,7 +647,7 @@ def fill_discussion_table(ws: Any, discussion_points: list[DiscussionPoint]) -> 
         ws[f"B{index}"] = serial_no
         ws[f"C{index}"] = point.point_of_discussion
         ws[f"E{index}"] = point.discipline_of_work
-        ws[f"F{index}"] = point.conclusion_or_remark
+        ws[f"F{index}"] = build_conclusion_cell_text(point)
 
         for coord in [f"C{index}", f"E{index}", f"F{index}"]:
             ws[coord].alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
@@ -599,7 +693,10 @@ def build_workbook(template_content: bytes, meeting_record: MeetingRecord) -> by
     worksheet = workbook[workbook.sheetnames[0]]
 
     worksheet["B2"] = meeting_record.project_name.upper()
-    worksheet["D4"] = meeting_record.meeting_title
+    title_value = meeting_record.meeting_title
+    if meeting_record.mom_number:
+        title_value = f"{meeting_record.meeting_title} | Ref: {meeting_record.mom_number}"
+    worksheet["D4"] = title_value
     worksheet["D5"] = f"{meeting_record.meeting_date}\nPlace: {meeting_record.place}"
     worksheet["D5"].alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
 
@@ -607,10 +704,29 @@ def build_workbook(template_content: bytes, meeting_record: MeetingRecord) -> by
     fill_discussion_table(worksheet, meeting_record.discussion_points)
     adjust_sheet_layout(worksheet, meeting_record)
 
+    if meeting_record.next_meeting_date or meeting_record.next_meeting_place:
+        extra_rows = max(0, len(meeting_record.discussion_points[:25]) - BASE_DISCUSSION_ROWS)
+        footer_row = 29 + extra_rows
+        next_parts = ["Next Meeting:"]
+        if meeting_record.next_meeting_date:
+            next_parts.append(f"Date: {meeting_record.next_meeting_date}")
+        if meeting_record.next_meeting_place:
+            next_parts.append(f"Place: {meeting_record.next_meeting_place}")
+        worksheet[f"B{footer_row}"] = "  |  ".join(next_parts)
+        worksheet[f"B{footer_row}"].alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+
     output = BytesIO()
     workbook.save(output)
     output.seek(0)
     return output.getvalue()
+
+
+_PDF_STATUS_COLORS: dict[str, str] = {
+    "Open": "#ffe8e8",
+    "In Progress": "#fff8e1",
+    "Closed": "#e8f5e9",
+    "Deferred": "#eeeeee",
+}
 
 
 def build_pdf_report(meeting_record: MeetingRecord) -> bytes:
@@ -627,6 +743,7 @@ def build_pdf_report(meeting_record: MeetingRecord) -> bytes:
     title_style = ParagraphStyle("MOMTitle", parent=styles["Title"], textColor=colors.HexColor("#1f3a5f"))
     body_style = ParagraphStyle("MOMBody", parent=styles["BodyText"], leading=14, spaceAfter=5)
     small_style = ParagraphStyle("MOMSmall", parent=body_style, fontSize=9, leading=11)
+    small_muted_style = ParagraphStyle("MOMMuted", parent=small_style, textColor=colors.HexColor("#555555"))
 
     story: list[Any] = [
         Paragraph("Minutes of Meeting", title_style),
@@ -635,6 +752,10 @@ def build_pdf_report(meeting_record: MeetingRecord) -> bytes:
         Paragraph(f"<b>Meeting:</b> {escape(meeting_record.meeting_title)}", body_style),
         Paragraph(f"<b>Date:</b> {escape(meeting_record.meeting_date)}", body_style),
         Paragraph(f"<b>Place:</b> {escape(meeting_record.place)}", body_style),
+    ]
+    if meeting_record.mom_number:
+        story.append(Paragraph(f"<b>MOM Ref:</b> {escape(meeting_record.mom_number)}", body_style))
+    story += [
         Spacer(1, 4),
         Paragraph("<b>Attendees</b>", body_style),
     ]
@@ -643,34 +764,128 @@ def build_pdf_report(meeting_record: MeetingRecord) -> bytes:
         story.append(Paragraph(f"- {escape(attendee)}", body_style))
 
     story.append(Spacer(1, 6))
-    table_data = [["Sr. No.", "Point of Discussion", "Discipline", "Conclusion / Remark"]]
+
+    # 5-column table: Sr | Point | Discipline | Status | Conclusion/Remark
+    table_data: list[Any] = [["Sr.", "Point of Discussion", "Discipline", "Status", "Conclusion / Remark"]]
     for index, point in enumerate(meeting_record.discussion_points, start=1):
+        conclusion_lines = [escape(point.conclusion_or_remark)]
+        if point.responsible_party or point.target_date:
+            owner_parts: list[str] = []
+            if point.responsible_party:
+                owner_parts.append(f"Owner: {escape(point.responsible_party)}")
+            if point.target_date:
+                owner_parts.append(f"Due: {escape(point.target_date)}")
+            conclusion_lines.append(f'<font size="8" color="#555555">{" | ".join(owner_parts)}</font>')
         table_data.append(
             [
                 str(index),
                 Paragraph(escape(point.point_of_discussion), small_style),
                 Paragraph(escape(point.discipline_of_work), small_style),
-                Paragraph(escape(point.conclusion_or_remark), small_style),
+                Paragraph(escape(point.status), small_style),
+                Paragraph("<br/>".join(conclusion_lines), small_style),
             ]
         )
 
-    table = Table(table_data, colWidths=[15 * mm, 75 * mm, 28 * mm, 62 * mm], repeatRows=1)
-    table.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#d9ead3")),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#8a8a8a")),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("PADDING", (0, 0), (-1, -1), 5),
-            ]
-        )
-    )
+    table = Table(table_data, colWidths=[12 * mm, 68 * mm, 25 * mm, 18 * mm, 57 * mm], repeatRows=1)
+
+    table_style_cmds: list[Any] = [
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#d9ead3")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#8a8a8a")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("PADDING", (0, 0), (-1, -1), 5),
+    ]
+    for row_idx, point in enumerate(meeting_record.discussion_points, start=1):
+        bg_hex = _PDF_STATUS_COLORS.get(point.status, "#ffffff")
+        table_style_cmds.append(("BACKGROUND", (0, row_idx), (-1, row_idx), colors.HexColor(bg_hex)))
+
+    table.setStyle(TableStyle(table_style_cmds))
     story.append(table)
+
+    if meeting_record.next_meeting_date or meeting_record.next_meeting_place:
+        story.append(Spacer(1, 10))
+        story.append(Paragraph("<b>Next Meeting</b>", body_style))
+        if meeting_record.next_meeting_date:
+            story.append(Paragraph(f"<b>Date:</b> {escape(meeting_record.next_meeting_date)}", body_style))
+        if meeting_record.next_meeting_place:
+            story.append(Paragraph(f"<b>Place:</b> {escape(meeting_record.next_meeting_place)}", body_style))
+
     doc.build(story)
     buffer.seek(0)
     return buffer.getvalue()
+
+def build_email_draft(record: MeetingRecord) -> str:
+    ref_suffix = f" ({record.mom_number})" if record.mom_number else ""
+    subject = f"Subject: Minutes of Meeting – {record.project_name} | {record.meeting_date}{ref_suffix}"
+
+    lines: list[str] = [
+        subject,
+        "",
+        "Dear All,",
+        "",
+        (
+            f"Please find below the Minutes of Meeting for the site visit held on {record.meeting_date}"
+            + (f" at {record.place}" if record.place else "") + "."
+        ),
+        "",
+        "--- MEETING DETAILS ---",
+        f"Project     : {record.project_name}",
+        f"Meeting     : {record.meeting_title}{ref_suffix}",
+        f"Date        : {record.meeting_date}",
+        f"Place       : {record.place}",
+        "",
+        "--- ATTENDEES ---",
+    ]
+    for attendee in record.attendees:
+        lines.append(f"  • {attendee}")
+
+    open_statuses = {"Open", "In Progress"}
+    action_points = [
+        (i, p) for i, p in enumerate(record.discussion_points, 1)
+        if p.status in open_statuses or p.responsible_party
+    ]
+    lines += ["", "--- ACTION ITEMS ---"]
+    if action_points:
+        for i, point in action_points:
+            owner = f" | Owner: {point.responsible_party}" if point.responsible_party else ""
+            due = f" | Due: {point.target_date}" if point.target_date else ""
+            status_tag = f" [{point.status}]" if point.status != "Open" else ""
+            lines.append(f"{i}. {point.point_of_discussion}{status_tag}{owner}{due}")
+    else:
+        lines.append("  No open action items recorded.")
+
+    lines += ["", "--- FULL DISCUSSION POINTS ---"]
+    for i, point in enumerate(record.discussion_points, 1):
+        lines.append(f"{i}. [{point.discipline_of_work}] {point.point_of_discussion}")
+        lines.append(f"   Remark: {point.conclusion_or_remark}")
+        detail_parts: list[str] = []
+        if point.responsible_party:
+            detail_parts.append(f"Owner: {point.responsible_party}")
+        if point.target_date:
+            detail_parts.append(f"Due: {point.target_date}")
+        if detail_parts:
+            lines.append(f"   {' | '.join(detail_parts)}")
+        lines.append("")
+
+    if record.next_meeting_date or record.next_meeting_place:
+        lines += ["--- NEXT MEETING ---"]
+        if record.next_meeting_date:
+            lines.append(f"Date  : {record.next_meeting_date}")
+        if record.next_meeting_place:
+            lines.append(f"Place : {record.next_meeting_place}")
+        lines.append("")
+
+    lines += [
+        "Please review and revert with any corrections within 48 hours.",
+        "",
+        "Regards,",
+        "[Your Name]",
+        "[Your Designation]",
+        "[Organization]",
+    ]
+    return "\n".join(lines)
+
 
 def run_app() -> None:
     st.set_page_config(page_title=APP_TITLE, layout="wide")
@@ -764,6 +979,11 @@ def run_app() -> None:
         elif selected_project_name == "Select project":
             project_name = ""
         meeting_title = st.text_input("Meeting title", key="meeting_title_input", value="Site Visit Meeting")
+        mom_number = st.text_input(
+            "MOM Reference No.",
+            key="mom_number_input",
+            placeholder="e.g. MOM-003",
+        )
         meeting_date = st.text_input(
             "Meeting date",
             key="meeting_date_input",
@@ -782,6 +1002,17 @@ def run_app() -> None:
             placeholder="Anything else the AI should know, like phase, package, contractor names, or purpose of the visit.",
             height=120,
         )
+        with st.expander("Next meeting details (optional)"):
+            next_meeting_date = st.text_input(
+                "Next meeting date",
+                key="next_meeting_date_input",
+                placeholder="e.g. 28 March 2026",
+            )
+            next_meeting_place = st.text_input(
+                "Next meeting place",
+                key="next_meeting_place_input",
+                placeholder="e.g. Ahmedabad site office",
+            )
 
     with right_col:
         st.subheader("Meeting Notes")
@@ -839,6 +1070,9 @@ def run_app() -> None:
                     attendees_text=attendees_payload,
                     notes=combined_notes,
                     extra_context=combined_context,
+                    mom_number=mom_number.strip(),
+                    next_meeting_date=next_meeting_date.strip(),
+                    next_meeting_place=next_meeting_place.strip(),
                 )
                 record.attendees = unique_nonempty(record.attendees + combined_attendees)
                 generated_workbook = build_workbook(template_bytes(), record)
@@ -846,28 +1080,50 @@ def run_app() -> None:
 
             st.success("Excel MOM generated successfully.")
 
+            _STATUS_STYLE_MAP = {
+                "Open": "background-color: #ffe0e0",
+                "In Progress": "background-color: #fff3cd",
+                "Closed": "background-color: #d4edda",
+                "Deferred": "background-color: #e2e3e5",
+            }
+
             preview_rows = [
                 {
-                    "Sr. No.": index,
-                    "Point of discussion": point.point_of_discussion,
+                    "Sr.": index,
+                    "Point of Discussion": point.point_of_discussion,
                     "Discipline": point.discipline_of_work,
+                    "Status": point.status,
+                    "Owner": point.responsible_party,
+                    "Due Date": point.target_date,
                     "Conclusion / Remark": point.conclusion_or_remark,
                 }
                 for index, point in enumerate(record.discussion_points, start=1)
             ]
 
-            excel_tab, pdf_tab = st.tabs(["Excel Preview", "PDF Preview"])
+            excel_tab, pdf_tab, email_tab = st.tabs(["Excel Preview", "PDF Preview", "Email Draft"])
 
             with excel_tab:
                 st.subheader("Structured Preview")
                 st.write(f"**Project:** {record.project_name}")
                 st.write(f"**Meeting:** {record.meeting_title}")
+                if record.mom_number:
+                    st.write(f"**MOM Ref:** {record.mom_number}")
                 st.write(f"**Date:** {record.meeting_date}")
                 st.write(f"**Place:** {record.place}")
+                if record.next_meeting_date or record.next_meeting_place:
+                    next_info = " — ".join(filter(None, [record.next_meeting_date, record.next_meeting_place]))
+                    st.write(f"**Next Meeting:** {next_info}")
                 st.write("**Attendees:**")
                 for attendee in record.attendees:
                     st.write(f"- {attendee}")
-                st.dataframe(preview_rows, use_container_width=True, hide_index=True)
+                df = pd.DataFrame(preview_rows)
+                try:
+                    styled_df = df.style.map(
+                        lambda v: _STATUS_STYLE_MAP.get(v, ""), subset=["Status"]
+                    )
+                    st.dataframe(styled_df, use_container_width=True, hide_index=True)
+                except Exception:
+                    st.dataframe(df, use_container_width=True, hide_index=True)
 
             with pdf_tab:
                 st.subheader("PDF Preview")
@@ -880,8 +1136,14 @@ def run_app() -> None:
                     unsafe_allow_html=True,
                 )
 
-            output_name = sanitize_filename(f"{record.project_name}_{record.meeting_date}_MOM") + ".xlsx"
-            pdf_name = sanitize_filename(f"{record.project_name}_{record.meeting_date}_MOM") + ".pdf"
+            with email_tab:
+                st.subheader("Email Draft")
+                st.caption("Copy and paste this into your email client. Edit as needed before sending.")
+                st.code(build_email_draft(record), language="")
+
+            mom_suffix = f"_{sanitize_filename(record.mom_number)}" if record.mom_number else ""
+            output_name = sanitize_filename(f"{record.project_name}_{record.meeting_date}_MOM{mom_suffix}") + ".xlsx"
+            pdf_name = sanitize_filename(f"{record.project_name}_{record.meeting_date}_MOM{mom_suffix}") + ".pdf"
             download_col_1, download_col_2 = st.columns(2)
             with download_col_1:
                 st.download_button(
