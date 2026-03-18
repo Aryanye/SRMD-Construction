@@ -29,12 +29,24 @@ for _dotenv_candidate in [_here, _here.parent, _here.parent.parent]:
         load_dotenv(dotenv_path=_dotenv_candidate / ".env")
         break
 
+
+def _get_secret(key: str, default: str = "") -> str:
+    """Read a secret from env vars (local .env) or st.secrets (Streamlit Cloud)."""
+    value = os.getenv(key, "").strip()
+    if value:
+        return value
+    try:
+        return str(st.secrets.get(key, default)).strip()
+    except Exception:
+        return default
+
+
 APP_TITLE = "Construction Quality Inspector"
 DEFAULT_MODEL = "gpt-5.1"
-ZOHO_PORTAL_ID = os.getenv("ZOHO_PORTAL_ID", "60062895348")
-ZOHO_CLIENT_ID = os.getenv("ZOHO_CLIENT_ID", "").strip()
-ZOHO_CLIENT_SECRET = os.getenv("ZOHO_CLIENT_SECRET", "").strip()
-ZOHO_REFRESH_TOKEN = os.getenv("ZOHO_REFRESH_TOKEN", "").strip()
+ZOHO_PORTAL_ID = _get_secret("ZOHO_PORTAL_ID", "60062895348")
+ZOHO_CLIENT_ID = _get_secret("ZOHO_CLIENT_ID")
+ZOHO_CLIENT_SECRET = _get_secret("ZOHO_CLIENT_SECRET")
+ZOHO_REFRESH_TOKEN = _get_secret("ZOHO_REFRESH_TOKEN")
 MODEL_OPTIONS = ["gpt-5.1", "gpt-5-mini", "gpt-4.1"]
 QUALITY_LEVELS = ["Excellent", "Good", "Fair", "Poor", "Critical"]
 CONFIDENCE_LEVELS = ["High", "Medium", "Low"]
@@ -750,7 +762,7 @@ with st.sidebar:
         "It is a site-review assistant, not a substitute for a licensed engineer or inspector."
     )
 
-api_key = os.getenv("OPENAI_API_KEY", "").strip()
+api_key = _get_secret("OPENAI_API_KEY")
 if not api_key:
     st.warning("OpenAI API key not found in the environment. Add `OPENAI_API_KEY` to the repo root `.env` file.")
 
