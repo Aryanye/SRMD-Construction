@@ -10,7 +10,8 @@ name = "Run"
 icon = "run"
 command = '''
 cd /Users/aryanshah/Desktop/Codex
-python3 -m streamlit run construction_quality_app.py
+pip install -r const_qual_app/requirements.txt -q
+python3 -m streamlit run const_qual_app/construction_quality_app.py
 '''
 
 [[actions]]

@@ -23,7 +23,11 @@ from reportlab.platypus import Image as RLImage
 from reportlab.platypus import KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 import streamlit as st
 
-load_dotenv(dotenv_path=Path(__file__).resolve().parents[1] / ".env")
+_here = Path(__file__).resolve().parent
+for _dotenv_candidate in [_here, _here.parent, _here.parent.parent]:
+    if (_dotenv_candidate / ".env").exists():
+        load_dotenv(dotenv_path=_dotenv_candidate / ".env")
+        break
 
 APP_TITLE = "Construction Quality Inspector"
 DEFAULT_MODEL = "gpt-5.1"
