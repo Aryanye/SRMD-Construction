@@ -12,6 +12,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 from openai import OpenAI
+import requests
 from PIL import Image as PILImage, ImageDraw
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -26,6 +27,10 @@ load_dotenv(dotenv_path=Path(__file__).resolve().parents[1] / ".env")
 
 APP_TITLE = "Construction Quality Inspector"
 DEFAULT_MODEL = "gpt-5.1"
+ZOHO_PORTAL_ID = os.getenv("ZOHO_PORTAL_ID", "60062895348")
+ZOHO_CLIENT_ID = os.getenv("ZOHO_CLIENT_ID", "").strip()
+ZOHO_CLIENT_SECRET = os.getenv("ZOHO_CLIENT_SECRET", "").strip()
+ZOHO_REFRESH_TOKEN = os.getenv("ZOHO_REFRESH_TOKEN", "").strip()
 MODEL_OPTIONS = ["gpt-5.1", "gpt-5-mini", "gpt-4.1"]
 QUALITY_LEVELS = ["Excellent", "Good", "Fair", "Poor", "Critical"]
 CONFIDENCE_LEVELS = ["High", "Medium", "Low"]
@@ -694,6 +699,33 @@ def quality_badge(level: str) -> str:
     )
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_zoho_project_names() -> list[str]:
+    """Fetch active project names from Zoho Projects containing the word 'Project'."""
+    token_resp = requests.post(
+        "https://accounts.zoho.in/oauth/v2/token",
+        params={
+            "client_id": ZOHO_CLIENT_ID,
+            "client_secret": ZOHO_CLIENT_SECRET,
+            "refresh_token": ZOHO_REFRESH_TOKEN,
+            "grant_type": "refresh_token",
+        },
+        timeout=10,
+    )
+    token_resp.raise_for_status()
+    access_token = token_resp.json()["access_token"]
+
+    projects_resp = requests.get(
+        f"https://projectsapi.zoho.in/restapi/portal/{ZOHO_PORTAL_ID}/projects/",
+        headers={"Authorization": f"Zoho-oauthtoken {access_token}"},
+        params={"per_page": 100},
+        timeout=10,
+    )
+    projects_resp.raise_for_status()
+    projects = projects_resp.json().get("projects", [])
+    return sorted([p["name"] for p in projects if "project" in p["name"].lower()])
+
+
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 st.title(APP_TITLE)
 st.caption(
@@ -718,7 +750,25 @@ api_key = os.getenv("OPENAI_API_KEY", "").strip()
 if not api_key:
     st.warning("OpenAI API key not found in the environment. Add `OPENAI_API_KEY` to the repo root `.env` file.")
 
-project_name = st.text_input("Project name", placeholder="e.g. SRMD Tower A Podium")
+_zoho_ready = all([ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_REFRESH_TOKEN, ZOHO_PORTAL_ID])
+if _zoho_ready:
+    try:
+        with st.spinner("Loading projects from Zoho…"):
+            _zoho_names = fetch_zoho_project_names()
+        if _zoho_names:
+            project_name = st.selectbox(
+                "Project name",
+                options=_zoho_names,
+                help="Projects imported from Zoho Projects (names containing 'Project'). Refreshes every 5 minutes.",
+            )
+        else:
+            st.warning("No projects containing 'Project' found in Zoho Projects.")
+            project_name = st.text_input("Project name", placeholder="e.g. Projects - NGH A")
+    except Exception as _zoho_err:
+        st.warning(f"Could not load Zoho projects ({_zoho_err}). Enter the name manually.")
+        project_name = st.text_input("Project name", placeholder="e.g. Projects - NGH A")
+else:
+    project_name = st.text_input("Project name", placeholder="e.g. SRMD Tower A Podium")
 task_context = st.text_area(
     "Task context (optional)",
     placeholder=(
