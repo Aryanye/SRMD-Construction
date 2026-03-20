@@ -1264,105 +1264,135 @@ def run_app() -> None:
 
             st.success("Excel MOM generated successfully.")
 
-            _zoho_project_id = get_zoho_project_id(project_name) if project_name else None
-            if _zoho_project_id:
-                _excel_fname = sanitize_filename(
-                    f"{record.project_name}_{record.meeting_date}_MOM"
-                    + (f"_{sanitize_filename(record.mom_number)}" if record.mom_number else "")
-                ) + ".xlsx"
-                with st.spinner("Pushing MOM to Zoho Projects..."):
-                    _zoho_ok, _zoho_msg = push_mom_to_zoho(
-                        record=record,
-                        project_id=_zoho_project_id,
-                        excel_bytes=generated_workbook,
-                        excel_filename=_excel_fname,
-                    )
-                if _zoho_ok:
-                    st.success(f"Zoho: {_zoho_msg}")
-                else:
-                    st.warning(f"Zoho push: {_zoho_msg}")
+            # Persist generated data so preview/download/Zoho button survive re-renders
+            _excel_fname = sanitize_filename(
+                f"{record.project_name}_{record.meeting_date}_MOM"
+                + (f"_{sanitize_filename(record.mom_number)}" if record.mom_number else "")
+            ) + ".xlsx"
+            st.session_state["_mom_record"] = record
+            st.session_state["_mom_workbook"] = generated_workbook
+            st.session_state["_mom_pdf"] = generated_pdf
+            st.session_state["_mom_excel_fname"] = _excel_fname
+            st.session_state["_mom_project_name"] = project_name
+            st.session_state["_zoho_push_result"] = None  # reset on new generation
 
-            _STATUS_STYLE_MAP = {
-                "Open": "background-color: #ffe0e0",
-                "In Progress": "background-color: #fff3cd",
-                "Closed": "background-color: #d4edda",
-                "Deferred": "background-color: #e2e3e5",
-            }
-
-            preview_rows = [
-                {
-                    "Sr.": index,
-                    "Point of Discussion": point.point_of_discussion,
-                    "Discipline": point.discipline_of_work,
-                    "Status": point.status,
-                    "Owner": point.responsible_party,
-                    "Due Date": point.target_date,
-                    "Conclusion / Remark": point.conclusion_or_remark,
-                }
-                for index, point in enumerate(record.discussion_points, start=1)
-            ]
-
-            excel_tab, pdf_tab, email_tab = st.tabs(["Excel Preview", "PDF Preview", "Email Draft"])
-
-            with excel_tab:
-                st.subheader("Structured Preview")
-                st.write(f"**Project:** {record.project_name}")
-                st.write(f"**Meeting:** {record.meeting_title}")
-                if record.mom_number:
-                    st.write(f"**MOM Ref:** {record.mom_number}")
-                st.write(f"**Date:** {record.meeting_date}")
-                st.write(f"**Place:** {record.place}")
-                if record.next_meeting_date or record.next_meeting_place:
-                    next_info = " — ".join(filter(None, [record.next_meeting_date, record.next_meeting_place]))
-                    st.write(f"**Next Meeting:** {next_info}")
-                st.write("**Attendees:**")
-                for attendee in record.attendees:
-                    st.write(f"- {attendee}")
-                df = pd.DataFrame(preview_rows)
-                try:
-                    styled_df = df.style.map(
-                        lambda v: _STATUS_STYLE_MAP.get(v, ""), subset=["Status"]
-                    )
-                    st.dataframe(styled_df, use_container_width=True, hide_index=True)
-                except Exception:
-                    st.dataframe(df, use_container_width=True, hide_index=True)
-
-            with pdf_tab:
-                st.subheader("PDF Preview")
-                pdf_base64 = base64.b64encode(generated_pdf).decode("ascii")
-                st.markdown(
-                    (
-                        "<iframe style='width:100%; height:900px; border:1px solid #ddd;' "
-                        f"src='data:application/pdf;base64,{pdf_base64}'></iframe>"
-                    ),
-                    unsafe_allow_html=True,
-                )
-
-            with email_tab:
-                st.subheader("Email Draft")
-                st.caption("Copy and paste this into your email client. Edit as needed before sending.")
-                st.code(build_email_draft(record), language="")
-
-            mom_suffix = f"_{sanitize_filename(record.mom_number)}" if record.mom_number else ""
-            output_name = sanitize_filename(f"{record.project_name}_{record.meeting_date}_MOM{mom_suffix}") + ".xlsx"
-            pdf_name = sanitize_filename(f"{record.project_name}_{record.meeting_date}_MOM{mom_suffix}") + ".pdf"
-            download_col_1, download_col_2 = st.columns(2)
-            with download_col_1:
-                st.download_button(
-                    label="Download Excel File",
-                    data=generated_workbook,
-                    file_name=output_name,
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                )
-            with download_col_2:
-                st.download_button(
-                    label="Download PDF File",
-                    data=generated_pdf,
-                    file_name=pdf_name,
-                    mime="application/pdf",
-                )
         except Exception as exc:
             st.error(f"Could not generate the MOM workbook: {exc}")
+
+    # --- Persistent results section (survives tab clicks and re-renders) ---
+    _r: MeetingRecord | None = st.session_state.get("_mom_record")
+    if _r is not None:
+        _wb: bytes = st.session_state["_mom_workbook"]
+        _pdf: bytes = st.session_state["_mom_pdf"]
+        _excel_fname: str = st.session_state["_mom_excel_fname"]
+        _proj_name: str = st.session_state.get("_mom_project_name", "")
+
+        _STATUS_STYLE_MAP = {
+            "Open": "background-color: #ffe0e0",
+            "In Progress": "background-color: #fff3cd",
+            "Closed": "background-color: #d4edda",
+            "Deferred": "background-color: #e2e3e5",
+        }
+
+        preview_rows = [
+            {
+                "Sr.": index,
+                "Point of Discussion": point.point_of_discussion,
+                "Discipline": point.discipline_of_work,
+                "Status": point.status,
+                "Owner": point.responsible_party,
+                "Due Date": point.target_date,
+                "Conclusion / Remark": point.conclusion_or_remark,
+            }
+            for index, point in enumerate(_r.discussion_points, start=1)
+        ]
+
+        excel_tab, pdf_tab, email_tab = st.tabs(["Excel Preview", "PDF Preview", "Email Draft"])
+
+        with excel_tab:
+            st.subheader("Structured Preview")
+            st.write(f"**Project:** {_r.project_name}")
+            st.write(f"**Meeting:** {_r.meeting_title}")
+            if _r.mom_number:
+                st.write(f"**MOM Ref:** {_r.mom_number}")
+            st.write(f"**Date:** {_r.meeting_date}")
+            st.write(f"**Place:** {_r.place}")
+            if _r.next_meeting_date or _r.next_meeting_place:
+                next_info = " — ".join(filter(None, [_r.next_meeting_date, _r.next_meeting_place]))
+                st.write(f"**Next Meeting:** {next_info}")
+            st.write("**Attendees:**")
+            for attendee in _r.attendees:
+                st.write(f"- {attendee}")
+            df = pd.DataFrame(preview_rows)
+            try:
+                styled_df = df.style.map(
+                    lambda v: _STATUS_STYLE_MAP.get(v, ""), subset=["Status"]
+                )
+                st.dataframe(styled_df, use_container_width=True, hide_index=True)
+            except Exception:
+                st.dataframe(df, use_container_width=True, hide_index=True)
+
+        with pdf_tab:
+            st.subheader("PDF Preview")
+            pdf_base64 = base64.b64encode(_pdf).decode("ascii")
+            st.markdown(
+                (
+                    "<iframe style='width:100%; height:900px; border:1px solid #ddd;' "
+                    f"src='data:application/pdf;base64,{pdf_base64}'></iframe>"
+                ),
+                unsafe_allow_html=True,
+            )
+
+        with email_tab:
+            st.subheader("Email Draft")
+            st.caption("Copy and paste this into your email client. Edit as needed before sending.")
+            st.code(build_email_draft(_r), language="")
+
+        mom_suffix = f"_{sanitize_filename(_r.mom_number)}" if _r.mom_number else ""
+        output_name = sanitize_filename(f"{_r.project_name}_{_r.meeting_date}_MOM{mom_suffix}") + ".xlsx"
+        pdf_name = sanitize_filename(f"{_r.project_name}_{_r.meeting_date}_MOM{mom_suffix}") + ".pdf"
+
+        st.divider()
+        dl_col, zoho_col = st.columns([1, 1])
+        with dl_col:
+            st.download_button(
+                label="Download Excel File",
+                data=_wb,
+                file_name=output_name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+            st.download_button(
+                label="Download PDF File",
+                data=_pdf,
+                file_name=pdf_name,
+                mime="application/pdf",
+            )
+
+        with zoho_col:
+            _zoho_pid = get_zoho_project_id(_proj_name) if _proj_name else None
+            _prev_result: tuple[bool, str] | None = st.session_state.get("_zoho_push_result")
+            if _prev_result is not None:
+                if _prev_result[0]:
+                    st.success(f"Zoho: {_prev_result[1]}")
+                else:
+                    st.warning(f"Zoho push: {_prev_result[1]}")
+
+            if _zoho_pid:
+                if st.button("Push to Zoho Projects", type="primary", use_container_width=True):
+                    with st.spinner("Pushing MOM to Zoho Projects..."):
+                        _ok, _msg = push_mom_to_zoho(
+                            record=_r,
+                            project_id=_zoho_pid,
+                            excel_bytes=_wb,
+                            excel_filename=_excel_fname,
+                        )
+                    st.session_state["_zoho_push_result"] = (_ok, _msg)
+                    st.rerun()
+            else:
+                st.info(
+                    "Zoho push unavailable for this project.\n\n"
+                    "Select a **Projects - \\*** project from the dropdown to enable it."
+                )
 
 
 if __name__ == "__main__":
