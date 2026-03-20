@@ -21,15 +21,16 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+import requests
 import streamlit as st
 
 APP_TITLE = "SRMD MOM Generator"
 DEFAULT_MODEL = "gpt-5.1"
 MODEL_OPTIONS = ["gpt-5.1", "gpt-5-mini", "gpt-4.1"]
-PROJECT_OPTIONS = ["Vinay-Vivek", "NGH-A", "NGH-B", "NGH-C", "P2", "SRAH", "RU"]
+ZOHO_FALLBACK_OPTIONS = ["Vinay-Vivek", "NGH-A", "NGH-B", "NGH-C", "P2", "SRAH", "RU"]
 NGH_PROJECT_OPTIONS = ["NGH-A", "NGH-B", "NGH-C"]
 MANUAL_PROJECT_OPTION = "Other (Enter manually)"
-PROJECT_SELECTION_OPTIONS = ["Select project"] + PROJECT_OPTIONS + [MANUAL_PROJECT_OPTION]
+ZOHO_PORTAL_ID_DEFAULT = "60062895348"
 DEFAULT_TEMPLATE_PATH = "mom_app/SRMD MOM Format.xlsx"
 DISCUSSION_START_ROW = 19
 BASE_DISCUSSION_ROWS = 9
@@ -112,6 +113,63 @@ def get_api_key() -> str:
     if secret_value:
         return str(secret_value)
     return os.getenv("OPENAI_API_KEY", "")
+
+
+def _get_zoho_secret(key: str) -> str:
+    return str(st.secrets.get(key, "") or os.getenv(key, ""))
+
+
+@st.cache_data(ttl=300)
+def fetch_zoho_project_options() -> list[str]:
+    """Fetch active Zoho projects whose names contain 'Project'. Cached 5 min."""
+    client_id = _get_zoho_secret("ZOHO_CLIENT_ID")
+    client_secret = _get_zoho_secret("ZOHO_CLIENT_SECRET")
+    refresh_token = _get_zoho_secret("ZOHO_REFRESH_TOKEN")
+    portal_id = _get_zoho_secret("ZOHO_PORTAL_ID") or ZOHO_PORTAL_ID_DEFAULT
+
+    if not (client_id and client_secret and refresh_token):
+        return ZOHO_FALLBACK_OPTIONS
+
+    try:
+        token_resp = requests.post(
+            "https://accounts.zoho.in/oauth/v2/token",
+            params={
+                "grant_type": "refresh_token",
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "refresh_token": refresh_token,
+            },
+            timeout=10,
+        )
+        token_resp.raise_for_status()
+        access_token = token_resp.json()["access_token"]
+
+        projects: list[dict] = []
+        page = 1
+        while True:
+            resp = requests.get(
+                f"https://projectsapi.zoho.in/restapi/portal/{portal_id}/projects/",
+                headers={"Authorization": f"Zoho-oauthtoken {access_token}"},
+                params={"status": "active", "per_page": 100, "page": page},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            batch = resp.json().get("projects", [])
+            if not batch:
+                break
+            projects.extend(batch)
+            if len(batch) < 100:
+                break
+            page += 1
+
+        filtered = sorted(
+            p["name"].strip()
+            for p in projects
+            if "project" in p["name"].lower()
+        )
+        return filtered if filtered else ZOHO_FALLBACK_OPTIONS
+    except Exception:
+        return ZOHO_FALLBACK_OPTIONS
 
 
 def clean_lines(value: str) -> list[str]:
@@ -955,9 +1013,11 @@ def run_app() -> None:
         st.session_state.setdefault("project_name_custom_input", "")
         st.session_state.setdefault("meeting_title_input", "Site Visit Meeting")
 
+        _zoho_opts = fetch_zoho_project_options()
+        _project_selection_options = ["Select project"] + _zoho_opts + [MANUAL_PROJECT_OPTION]
         selected_project_name = st.selectbox(
             "Project name",
-            PROJECT_SELECTION_OPTIONS,
+            _project_selection_options,
             key="project_name_select",
         )
         project_name = selected_project_name
