@@ -1051,7 +1051,8 @@ def generate_ai_key_points(record: MeetingRecord, api_key: str) -> str:
         prompt = (
             f"You are a construction project manager's assistant. "
             f"Summarise the following meeting discussion points into concise bullet points. "
-            f"Group related points, highlight open action items and their owners, and keep it brief.\n\n"
+            f"Group related points, highlight open action items and their owners. "
+            f"IMPORTANT: Keep the entire response under 900 characters. Be brief and direct.\n\n"
             f"Meeting: {record.meeting_title} | Date: {record.meeting_date} | Project: {record.project_name}\n\n"
             f"Discussion Points:\n{points_text}"
         )
@@ -1059,27 +1060,27 @@ def generate_ai_key_points(record: MeetingRecord, api_key: str) -> str:
         resp = client.chat.completions.create(
             model="gpt-4.1-mini",
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=600,
+            max_tokens=300,
             temperature=0.3,
         )
-        return resp.choices[0].message.content.strip()
+        return resp.choices[0].message.content.strip()[:1000]
     except Exception:
         return _fallback_key_points(record)
 
 
 def _fallback_key_points(record: MeetingRecord) -> str:
-    """Fallback bulleted key points without AI."""
+    """Fallback bulleted key points without AI — capped at 1000 chars."""
     lines = [f"Meeting Summary — {record.meeting_title} ({record.meeting_date})", ""]
     for dp in record.discussion_points:
         bullet = f"• [{dp.discipline_of_work}] {dp.point_of_discussion}"
         if dp.conclusion_or_remark:
-            bullet += f"\n  → {dp.conclusion_or_remark}"
+            bullet += f" → {dp.conclusion_or_remark}"
         if dp.responsible_party:
-            bullet += f"\n  Owner: {dp.responsible_party} | Due: {dp.target_date} | Status: {dp.status}"
+            bullet += f" | Owner: {dp.responsible_party} | Due: {dp.target_date} | {dp.status}"
         lines.append(bullet)
     if record.next_meeting_date or record.next_meeting_place:
         lines += ["", f"Next Meeting: {record.next_meeting_date} at {record.next_meeting_place}".strip()]
-    return "\n".join(lines)
+    return "\n".join(lines)[:1000]
 
 
 def _to_zoho_date(date_str: str) -> str:
@@ -1121,10 +1122,11 @@ def push_mom_to_zoho(
         key_points = generate_ai_key_points(record, api_key)
 
         # Build payload — include mandatory layout fields
+        # minutes_of_meeting is capped at 1000 chars by Zoho's field limit
         payload: dict = {
             "name": record_name,
             "description": description,
-            "minutes_of_meeting": key_points,
+            "minutes_of_meeting": key_points[:1000],
             "project": {"id": project_id},
             "date_of_decision": _to_zoho_date(record.meeting_date),
         }
