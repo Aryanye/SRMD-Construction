@@ -1001,8 +1001,8 @@ def build_email_draft(record: MeetingRecord) -> str:
     return "\n".join(lines)
 
 
-def build_mom_zoho_description(record: MeetingRecord) -> str:
-    """Builds a plain-text key-points summary for the Zoho MOMs record."""
+def build_mom_table_description(record: MeetingRecord) -> str:
+    """Builds a full MOM table as plain text for the Zoho record description."""
     lines = [
         f"Meeting: {record.meeting_title}",
         f"Date: {record.meeting_date}",
@@ -1012,20 +1012,66 @@ def build_mom_zoho_description(record: MeetingRecord) -> str:
         lines.append(f"Ref: {record.mom_number}")
     attendees = record.attendees[:10]
     suffix = f" + {len(record.attendees) - 10} more" if len(record.attendees) > 10 else ""
-    lines += ["", f"Attendees: {', '.join(attendees)}{suffix}", "", "Key Points:"]
-    open_pts = [dp for dp in record.discussion_points if dp.status in {"Open", "In Progress"}]
-    for i, dp in enumerate(open_pts[:15], 1):
-        row = f"  {i}. [{dp.discipline_of_work}] {dp.point_of_discussion}"
-        if dp.conclusion_or_remark:
-            row += f"\n     \u2192 {dp.conclusion_or_remark}"
-        if dp.responsible_party:
-            row += f"\n     Owner: {dp.responsible_party} | Due: {dp.target_date} | Status: {dp.status}"
+    lines += ["", f"Attendees: {', '.join(attendees)}{suffix}", ""]
+
+    # Full discussion table
+    header = f"{'#':<4} {'Discipline':<18} {'Point of Discussion':<50} {'Conclusion/Remark':<40} {'Owner':<20} {'Due':<12} {'Status':<12}"
+    lines += [header, "-" * len(header)]
+    for i, dp in enumerate(record.discussion_points, 1):
+        row = (
+            f"{i:<4} {dp.discipline_of_work[:17]:<18} {dp.point_of_discussion[:49]:<50} "
+            f"{dp.conclusion_or_remark[:39]:<40} {dp.responsible_party[:19]:<20} "
+            f"{dp.target_date[:11]:<12} {dp.status:<12}"
+        )
         lines.append(row)
+
     if record.next_meeting_date or record.next_meeting_place:
-        lines += [
-            "",
-            f"Next Meeting: {record.next_meeting_date} at {record.next_meeting_place}".strip(),
-        ]
+        lines += ["", f"Next Meeting: {record.next_meeting_date} at {record.next_meeting_place}".strip()]
+    return "\n".join(lines)
+
+
+def generate_ai_key_points(record: MeetingRecord, api_key: str) -> str:
+    """Uses OpenAI to produce a bulleted key-points summary of the meeting."""
+    if not api_key:
+        return _fallback_key_points(record)
+    try:
+        points_text = "\n".join(
+            f"- [{dp.discipline_of_work}] {dp.point_of_discussion}"
+            + (f" → {dp.conclusion_or_remark}" if dp.conclusion_or_remark else "")
+            + (f" (Owner: {dp.responsible_party}, Due: {dp.target_date}, Status: {dp.status})" if dp.responsible_party else "")
+            for dp in record.discussion_points
+        )
+        prompt = (
+            f"You are a construction project manager's assistant. "
+            f"Summarise the following meeting discussion points into concise bullet points. "
+            f"Group related points, highlight open action items and their owners, and keep it brief.\n\n"
+            f"Meeting: {record.meeting_title} | Date: {record.meeting_date} | Project: {record.project_name}\n\n"
+            f"Discussion Points:\n{points_text}"
+        )
+        client = OpenAI(api_key=api_key)
+        resp = client.chat.completions.create(
+            model="gpt-4.1-mini",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=600,
+            temperature=0.3,
+        )
+        return resp.choices[0].message.content.strip()
+    except Exception:
+        return _fallback_key_points(record)
+
+
+def _fallback_key_points(record: MeetingRecord) -> str:
+    """Fallback bulleted key points without AI."""
+    lines = [f"Meeting Summary — {record.meeting_title} ({record.meeting_date})", ""]
+    for dp in record.discussion_points:
+        bullet = f"• [{dp.discipline_of_work}] {dp.point_of_discussion}"
+        if dp.conclusion_or_remark:
+            bullet += f"\n  → {dp.conclusion_or_remark}"
+        if dp.responsible_party:
+            bullet += f"\n  Owner: {dp.responsible_party} | Due: {dp.target_date} | Status: {dp.status}"
+        lines.append(bullet)
+    if record.next_meeting_date or record.next_meeting_place:
+        lines += ["", f"Next Meeting: {record.next_meeting_date} at {record.next_meeting_place}".strip()]
     return "\n".join(lines)
 
 
@@ -1045,6 +1091,7 @@ def push_mom_to_zoho(
     project_id: str,
     excel_bytes: bytes,
     excel_filename: str,
+    api_key: str = "",
 ) -> tuple[bool, str]:
     """Creates a MOM record in the Zoho Projects custom MOMs module and attaches the Excel.
     Returns (success, message). Never raises — all exceptions are caught."""
@@ -1058,19 +1105,21 @@ def push_mom_to_zoho(
         module_api_name = _get_moms_module_api_name(portal_id)
         access_token = _get_zoho_access_token(client_id, client_secret, refresh_token)
         record_name = f"{record.mom_number or record.meeting_title} \u2014 {record.meeting_date}"
-        description = build_mom_zoho_description(record)
 
         headers = {"Authorization": f"Zoho-oauthtoken {access_token}"}
-        # Correct V3 endpoint: /api/v3/portal/{portal_id}/module/{api_name}/entities
-        # Scope: ZohoProjects.portals.CREATE (covered by portals.ALL)
         base = f"https://projectsapi.zoho.in/api/v3/portal/{portal_id}/module/{module_api_name}"
+
+        # description = full MOM table; minutes_of_meeting = AI-generated bullet summary
+        description = build_mom_table_description(record)
+        key_points = generate_ai_key_points(record, api_key)
 
         # Build payload — include mandatory layout fields
         payload: dict = {
             "name": record_name,
             "description": description,
+            "minutes_of_meeting": key_points,
             "project": {"id": project_id},
-            "date_of_decision": _to_zoho_date(record.meeting_date),  # Zoho expects MM-DD-YYYY
+            "date_of_decision": _to_zoho_date(record.meeting_date),
         }
 
         # Create the MOMs entity; project field links it to the right project
@@ -1468,6 +1517,7 @@ def run_app() -> None:
                             project_id=_zoho_pid,
                             excel_bytes=_wb,
                             excel_filename=_excel_fname,
+                            api_key=get_api_key(),
                         )
                     st.session_state["_zoho_push_result"] = (_ok, _msg)
                     st.rerun()
