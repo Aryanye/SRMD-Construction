@@ -31,6 +31,7 @@ ZOHO_FALLBACK_OPTIONS = ["Vinay-Vivek", "NGH-A", "NGH-B", "NGH-C", "P2", "SRAH",
 NGH_PROJECT_OPTIONS = ["NGH-A", "NGH-B", "NGH-C"]
 MANUAL_PROJECT_OPTION = "Other (Enter manually)"
 ZOHO_PORTAL_ID_DEFAULT = "60062895348"
+ZOHO_MOMS_MODULE_ID_DEFAULT = "395368000001366820"  # from browser URL /cm/{id}/
 DEFAULT_TEMPLATE_PATH = "mom_app/SRMD MOM Format.xlsx"
 DISCUSSION_START_ROW = 19
 BASE_DISCUSSION_ROWS = 9
@@ -186,53 +187,42 @@ def get_zoho_project_id(name: str) -> str | None:
 
 
 @st.cache_data(ttl=3600)
-def _fetch_moms_module_api_name(portal_id: str) -> tuple[str | None, str | None]:
-    """Discovers the api_name for the 'MOMs' custom module.
-    Returns (api_name, error_hint). Cached 1 hour.
+def _get_moms_module_id(portal_id: str) -> tuple[str | None, str | None]:
+    """Returns the numeric module ID for the 'MOMs' custom module.
+    Returns (module_id, error_hint). Cached 1 hour.
 
-    Manual overrides (checked first):
-      ZOHO_MOMS_MODULE_NAME — api_name string (e.g. "moms")
+    Resolution order:
+      1. ZOHO_MOMS_MODULE_ID secret (manual override — fastest)
+      2. GET /api/v3/portal/{portal_id}/settings/modules (requires ZohoProjects.custom_fields.ALL)
+      3. Hardcoded default ZOHO_MOMS_MODULE_ID_DEFAULT
     """
-    manual = _get_zoho_secret("ZOHO_MOMS_MODULE_NAME")
+    # Manual override
+    manual = _get_zoho_secret("ZOHO_MOMS_MODULE_ID")
     if manual:
         return manual, None
 
     client_id = _get_zoho_secret("ZOHO_CLIENT_ID")
     client_secret = _get_zoho_secret("ZOHO_CLIENT_SECRET")
     refresh_token = _get_zoho_secret("ZOHO_REFRESH_TOKEN")
-    if not (client_id and client_secret and refresh_token):
-        return None, "Zoho credentials not configured."
 
-    portal_name = _get_zoho_secret("ZOHO_PORTAL_NAME") or portal_id
-    errors: list[str] = []
-
-    try:
-        access_token = _get_zoho_access_token(client_id, client_secret, refresh_token)
-        headers = {"Authorization": f"Zoho-oauthtoken {access_token}"}
-
-        # Try with portal name first (V3 uses name, not numeric ID)
-        for portal_key in [portal_name, portal_id]:
-            url = f"https://projectsapi.zoho.in/api/v3/portal/{portal_key}/settings/modules"
-            resp = requests.get(url, headers=headers, timeout=10)
+    if client_id and client_secret and refresh_token:
+        try:
+            access_token = _get_zoho_access_token(client_id, client_secret, refresh_token)
+            resp = requests.get(
+                f"https://projectsapi.zoho.in/api/v3/portal/{portal_id}/settings/modules",
+                headers={"Authorization": f"Zoho-oauthtoken {access_token}"},
+                params={"is_customized": True},
+                timeout=10,
+            )
             if resp.ok:
                 for mod in resp.json().get("modules", []):
-                    if mod.get("display_name", "").strip().lower() == "moms":
-                        return mod.get("api_name"), None
-                return None, (
-                    "Module named 'MOMs' not found in portal. Check the display name in "
-                    "Zoho Settings → Custom Modules, then set ZOHO_MOMS_MODULE_NAME secret."
-                )
-            errors.append(f"[{portal_key}] {resp.status_code}: {resp.text[:120]}")
+                    if mod.get("display_label", "").strip().lower() == "moms":
+                        return str(mod.get("id") or mod.get("api_name")), None
+        except Exception:
+            pass
 
-        hint = (
-            "Could not discover MOMs module api_name. "
-            "Set ZOHO_MOMS_MODULE_NAME in Streamlit secrets to bypass discovery "
-            "(find it under Zoho Settings → Custom Modules → MOMs → API Name). "
-            f"Errors: {' | '.join(errors)}"
-        )
-        return None, hint
-    except Exception as exc:
-        return None, f"Module discovery failed: {exc}"
+    # Fall back to the known module ID extracted from the browser URL
+    return ZOHO_MOMS_MODULE_ID_DEFAULT, None
 
 
 def clean_lines(value: str) -> list[str]:
@@ -1051,47 +1041,44 @@ def push_mom_to_zoho(
     if not (client_id and client_secret and refresh_token):
         return False, "Zoho credentials not configured."
     try:
-        module_api_name, discovery_error = _fetch_moms_module_api_name(portal_id)
-        if not module_api_name:
-            return False, discovery_error or "Could not find 'MOMs' custom module in Zoho portal."
+        module_id, _ = _get_moms_module_id(portal_id)
+        if not module_id:
+            return False, "Could not determine MOMs module ID."
         access_token = _get_zoho_access_token(client_id, client_secret, refresh_token)
-        portal_name = _get_zoho_secret("ZOHO_PORTAL_NAME") or portal_id
         record_name = f"{record.mom_number or record.meeting_title} \u2014 {record.meeting_date}"
         description = build_mom_zoho_description(record)
 
         headers = {"Authorization": f"Zoho-oauthtoken {access_token}"}
+        # V3 custom module records: portal/{id}/{module_id}/records  (no /projects/ segment)
+        base = f"https://projectsapi.zoho.in/api/v3/portal/{portal_id}/{module_id}"
 
-        # V3 API uses portal name, not numeric ID
-        base = (
-            f"https://projectsapi.zoho.in/api/v3/portal/{portal_name}"
-            f"/projects/{project_id}"
-        )
-
-        # Create the MOMs record
+        # Create the MOMs record; include project_id so it's linked to the right project
         create_resp = requests.post(
-            f"{base}/{module_api_name}/",
+            f"{base}/records",
             headers=headers,
-            json={"name": record_name, "description": description},
+            json={"name": record_name, "description": description, "project": {"id": project_id}},
             timeout=15,
         )
         if not create_resp.ok:
             return False, (
                 f"Failed to create Zoho record ({create_resp.status_code}): "
-                f"{create_resp.text[:300]}"
+                f"{create_resp.text[:400]}"
             )
         data = create_resp.json()
+        # Extract record ID from response — try several known shapes
         record_id = (
             data.get("data", {}).get("id")
-            or (data.get(module_api_name) or [{}])[0].get("id")
+            or data.get("record", {}).get("id")
+            or (data.get("records") or [{}])[0].get("id")
         )
         if not record_id:
-            return False, (
-                f"Record created but could not extract its ID — attachment skipped. "
+            return True, (
+                f"MOM record created in Zoho but could not extract its ID — attachment skipped. "
                 f"Response: {str(data)[:200]}"
             )
         # Attach the Excel file
         attach_resp = requests.post(
-            f"{base}/{module_api_name}/{record_id}/attachments/",
+            f"{base}/records/{record_id}/attachments",
             headers=headers,
             files={
                 "file": (
