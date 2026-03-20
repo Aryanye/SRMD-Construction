@@ -137,15 +137,15 @@ def _get_zoho_access_token(client_id: str, client_secret: str, refresh_token: st
 
 
 @st.cache_data(ttl=300)
-def _fetch_zoho_projects_raw() -> dict[str, str]:
-    """Returns {project_name: project_id} for active projects containing 'project'.
-    Returns {} if credentials are missing or the call fails."""
+def _fetch_zoho_projects_raw() -> tuple[dict[str, str], str]:
+    """Returns ({project_name: project_id}, error_msg) for active projects containing 'project'.
+    error_msg is "" on success, otherwise describes what went wrong."""
     client_id = _get_zoho_secret("ZOHO_CLIENT_ID")
     client_secret = _get_zoho_secret("ZOHO_CLIENT_SECRET")
     refresh_token = _get_zoho_secret("ZOHO_REFRESH_TOKEN")
     portal_id = _get_zoho_secret("ZOHO_PORTAL_ID") or ZOHO_PORTAL_ID_DEFAULT
     if not (client_id and client_secret and refresh_token):
-        return {}
+        return {}, "Zoho credentials not configured."
     try:
         access_token = _get_zoho_access_token(client_id, client_secret, refresh_token)
         projects: list[dict] = []
@@ -157,7 +157,8 @@ def _fetch_zoho_projects_raw() -> dict[str, str]:
                 params={"status": "active", "per_page": 100, "page": page},
                 timeout=10,
             )
-            resp.raise_for_status()
+            if not resp.ok:
+                return {}, f"Zoho API error ({resp.status_code}): {resp.text[:200]}"
             batch = resp.json().get("projects", [])
             if not batch:
                 break
@@ -165,25 +166,29 @@ def _fetch_zoho_projects_raw() -> dict[str, str]:
             if len(batch) < 100:
                 break
             page += 1
-        return {
+        mapping = {
             p["name"].strip(): str(p["id"])
             for p in projects
             if "project" in p["name"].lower()
         }
-    except Exception:
-        return {}
+        return mapping, ""
+    except Exception as exc:
+        return {}, f"Zoho projects fetch failed: {exc}"
 
 
 @st.cache_data(ttl=300)
-def fetch_zoho_project_options() -> list[str]:
-    """Sorted list of project names containing 'Project'. Falls back to ZOHO_FALLBACK_OPTIONS."""
-    mapping = _fetch_zoho_projects_raw()
-    return sorted(mapping.keys()) if mapping else ZOHO_FALLBACK_OPTIONS
+def fetch_zoho_project_options() -> tuple[list[str], str]:
+    """Returns (project_names, error_msg). Falls back to ZOHO_FALLBACK_OPTIONS on error."""
+    mapping, err = _fetch_zoho_projects_raw()
+    if mapping:
+        return sorted(mapping.keys()), ""
+    return ZOHO_FALLBACK_OPTIONS, err
 
 
 def get_zoho_project_id(name: str) -> str | None:
     """Returns the Zoho project ID for a given project name, or None if not found."""
-    return _fetch_zoho_projects_raw().get(name)
+    mapping, _ = _fetch_zoho_projects_raw()
+    return mapping.get(name)
 
 
 @st.cache_data(ttl=3600)
@@ -1161,7 +1166,9 @@ def run_app() -> None:
         st.session_state.setdefault("project_name_custom_input", "")
         st.session_state.setdefault("meeting_title_input", "Site Visit Meeting")
 
-        _zoho_opts = fetch_zoho_project_options()
+        _zoho_opts, _zoho_err = fetch_zoho_project_options()
+        if _zoho_err:
+            st.warning(f"Could not load Zoho projects: {_zoho_err}")
         _project_selection_options = ["Select project"] + _zoho_opts + [MANUAL_PROJECT_OPTION]
         selected_project_name = st.selectbox(
             "Project name",
