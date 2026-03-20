@@ -1029,6 +1029,17 @@ def build_mom_zoho_description(record: MeetingRecord) -> str:
     return "\n".join(lines)
 
 
+def _to_zoho_date(date_str: str) -> str:
+    """Convert any common date string to Zoho's required MM-DD-YYYY format."""
+    from datetime import datetime
+    for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%m/%d/%Y", "%m-%d-%Y", "%d/%m/%y", "%d-%m-%y"):
+        try:
+            return datetime.strptime(date_str.strip(), fmt).strftime("%m-%d-%Y")
+        except ValueError:
+            continue
+    return date_str  # return as-is if unparseable
+
+
 def push_mom_to_zoho(
     record: MeetingRecord,
     project_id: str,
@@ -1059,7 +1070,7 @@ def push_mom_to_zoho(
             "name": record_name,
             "description": description,
             "project": {"id": project_id},
-            "date_of_decision": record.meeting_date,  # maps to the mandatory date field
+            "date_of_decision": _to_zoho_date(record.meeting_date),  # Zoho expects MM-DD-YYYY
         }
 
         # Create the MOMs entity; project field links it to the right project
