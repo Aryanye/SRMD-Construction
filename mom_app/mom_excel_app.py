@@ -1002,31 +1002,38 @@ def build_email_draft(record: MeetingRecord) -> str:
 
 
 def build_mom_table_description(record: MeetingRecord) -> str:
-    """Builds a full MOM table as plain text for the Zoho record description."""
-    lines = [
-        f"Meeting: {record.meeting_title}",
-        f"Date: {record.meeting_date}",
-        f"Place: {record.place}",
-    ]
+    """Builds the MOM as a markdown table matching the Excel layout."""
+    lines = []
     if record.mom_number:
-        lines.append(f"Ref: {record.mom_number}")
-    attendees = record.attendees[:10]
-    suffix = f" + {len(record.attendees) - 10} more" if len(record.attendees) > 10 else ""
-    lines += ["", f"Attendees: {', '.join(attendees)}{suffix}", ""]
+        lines.append(f"MOM Ref: {record.mom_number}")
+    lines += [
+        f"Meeting : {record.meeting_title}",
+        f"Date    : {record.meeting_date}",
+        f"Place   : {record.place}",
+        f"Project : {record.project_name}",
+    ]
+    if record.attendees:
+        lines.append(f"Attended: {', '.join(record.attendees)}")
+    lines.append("")
 
-    # Full discussion table
-    header = f"{'#':<4} {'Discipline':<18} {'Point of Discussion':<50} {'Conclusion/Remark':<40} {'Owner':<20} {'Due':<12} {'Status':<12}"
-    lines += [header, "-" * len(header)]
+    # Markdown table
+    lines.append("| Sr. No. | Point of Discussion | Discipline | Conclusion / Remark | Responsible Party | Target Date | Status |")
+    lines.append("|---------|---------------------|------------|---------------------|-------------------|-------------|--------|")
     for i, dp in enumerate(record.discussion_points, 1):
-        row = (
-            f"{i:<4} {dp.discipline_of_work[:17]:<18} {dp.point_of_discussion[:49]:<50} "
-            f"{dp.conclusion_or_remark[:39]:<40} {dp.responsible_party[:19]:<20} "
-            f"{dp.target_date[:11]:<12} {dp.status:<12}"
+        def esc(s: str) -> str:
+            return s.replace("|", "\\|").replace("\n", " ")
+        lines.append(
+            f"| {i} "
+            f"| {esc(dp.point_of_discussion)} "
+            f"| {esc(dp.discipline_of_work)} "
+            f"| {esc(dp.conclusion_or_remark)} "
+            f"| {esc(dp.responsible_party)} "
+            f"| {esc(dp.target_date)} "
+            f"| {esc(dp.status)} |"
         )
-        lines.append(row)
 
     if record.next_meeting_date or record.next_meeting_place:
-        lines += ["", f"Next Meeting: {record.next_meeting_date} at {record.next_meeting_place}".strip()]
+        lines += ["", f"Next Meeting: {record.next_meeting_date} — {record.next_meeting_place}".strip(" —")]
     return "\n".join(lines)
 
 
