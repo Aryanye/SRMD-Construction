@@ -1002,39 +1002,72 @@ def build_email_draft(record: MeetingRecord) -> str:
 
 
 def build_mom_table_description(record: MeetingRecord) -> str:
-    """Builds the MOM as a markdown table matching the Excel layout."""
-    lines = []
-    if record.mom_number:
-        lines.append(f"MOM Ref: {record.mom_number}")
-    lines += [
-        f"Meeting : {record.meeting_title}",
-        f"Date    : {record.meeting_date}",
-        f"Place   : {record.place}",
-        f"Project : {record.project_name}",
-    ]
-    if record.attendees:
-        lines.append(f"Attended: {', '.join(record.attendees)}")
-    lines.append("")
+    """Builds the MOM as an HTML table for Zoho Projects description field."""
 
-    # Markdown table
-    lines.append("| Sr. No. | Point of Discussion | Discipline | Conclusion / Remark | Responsible Party | Target Date | Status |")
-    lines.append("|---------|---------------------|------------|---------------------|-------------------|-------------|--------|")
+    def h(s: str) -> str:
+        """HTML-escape a string."""
+        return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    # Header block
+    meta_rows = [
+        ("Meeting", record.meeting_title),
+        ("Date", record.meeting_date),
+        ("Place", record.place),
+        ("Project", record.project_name),
+    ]
+    if record.mom_number:
+        meta_rows.insert(0, ("MOM Ref", record.mom_number))
+    if record.attendees:
+        meta_rows.append(("Attended", ", ".join(record.attendees)))
+
+    meta_html = "".join(
+        f"<tr><td><b>{h(k)}</b></td><td>{h(v)}</td></tr>"
+        for k, v in meta_rows
+    )
+
+    # Discussion table
+    row_style = ' style="background:#f9f9f9"'
+    rows_html = ""
     for i, dp in enumerate(record.discussion_points, 1):
-        def esc(s: str) -> str:
-            return s.replace("|", "\\|").replace("\n", " ")
-        lines.append(
-            f"| {i} "
-            f"| {esc(dp.point_of_discussion)} "
-            f"| {esc(dp.discipline_of_work)} "
-            f"| {esc(dp.conclusion_or_remark)} "
-            f"| {esc(dp.responsible_party)} "
-            f"| {esc(dp.target_date)} "
-            f"| {esc(dp.status)} |"
+        style = row_style if i % 2 == 0 else ""
+        rows_html += (
+            f"<tr{style}>"
+            f"<td>{i}</td>"
+            f"<td>{h(dp.point_of_discussion)}</td>"
+            f"<td>{h(dp.discipline_of_work)}</td>"
+            f"<td>{h(dp.conclusion_or_remark)}</td>"
+            f"<td>{h(dp.responsible_party)}</td>"
+            f"<td>{h(dp.target_date)}</td>"
+            f"<td>{h(dp.status)}</td>"
+            f"</tr>"
         )
 
+    th = '<th style="background:#2c3e50;color:#fff;padding:6px 10px;text-align:left">'
+    table_html = (
+        f'<table border="1" cellpadding="6" cellspacing="0" '
+        f'style="border-collapse:collapse;width:100%;font-family:Arial,sans-serif;font-size:13px">'
+        f"<thead><tr>"
+        f"{th}Sr. No.</th>{th}Point of Discussion</th>{th}Discipline</th>"
+        f"{th}Conclusion / Remark</th>{th}Responsible Party</th>"
+        f"{th}Target Date</th>{th}Status</th>"
+        f"</tr></thead>"
+        f"<tbody>{rows_html}</tbody>"
+        f"</table>"
+    )
+
+    next_meeting = ""
     if record.next_meeting_date or record.next_meeting_place:
-        lines += ["", f"Next Meeting: {record.next_meeting_date} — {record.next_meeting_place}".strip(" —")]
-    return "\n".join(lines)
+        next_meeting = (
+            f"<p><b>Next Meeting:</b> {h(record.next_meeting_date)} "
+            f"at {h(record.next_meeting_place)}</p>"
+        )
+
+    return (
+        f'<table border="0" cellpadding="4" style="font-family:Arial,sans-serif;font-size:13px;margin-bottom:12px">'
+        f"{meta_html}</table>"
+        f"{table_html}"
+        f"{next_meeting}"
+    )
 
 
 def generate_ai_key_points(record: MeetingRecord, api_key: str) -> str:
@@ -1050,9 +1083,10 @@ def generate_ai_key_points(record: MeetingRecord, api_key: str) -> str:
         )
         prompt = (
             f"You are a construction project manager's assistant. "
-            f"Summarise the following meeting discussion points into concise bullet points. "
-            f"Group related points, highlight open action items and their owners. "
-            f"IMPORTANT: Keep the entire response under 900 characters. Be brief and direct.\n\n"
+            f"From the meeting discussion points below, extract EXACTLY 5 to 7 of the most important ACTIONABLE decisions or tasks. "
+            f"Output only a plain bulleted list using '• ' as the bullet. "
+            f"Each bullet must be one concise sentence (max 15 words). No headers, no categories, no extra text. "
+            f"Total response must be under 900 characters.\n\n"
             f"Meeting: {record.meeting_title} | Date: {record.meeting_date} | Project: {record.project_name}\n\n"
             f"Discussion Points:\n{points_text}"
         )
