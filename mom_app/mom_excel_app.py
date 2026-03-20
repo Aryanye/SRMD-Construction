@@ -186,13 +186,23 @@ def get_zoho_project_id(name: str) -> str | None:
 
 
 @st.cache_data(ttl=3600)
-def _fetch_moms_module_api_name(portal_id: str) -> str | None:
-    """Discovers the api_name of the custom module with display_name 'MOMs'. Cached 1 hour."""
+def _fetch_moms_module_api_name(portal_id: str) -> tuple[str | None, str | None]:
+    """Discovers the api_name and record endpoint for the 'MOMs' custom module.
+    Returns (api_name, error_hint). Cached 1 hour.
+
+    Requires OAuth scope: ZohoProjects.portals.ALL
+    Manual override: set ZOHO_MOMS_MODULE_NAME secret to skip discovery.
+    """
+    # Allow manual override via secret (bypasses scope requirement)
+    manual = _get_zoho_secret("ZOHO_MOMS_MODULE_NAME")
+    if manual:
+        return manual, None
+
     client_id = _get_zoho_secret("ZOHO_CLIENT_ID")
     client_secret = _get_zoho_secret("ZOHO_CLIENT_SECRET")
     refresh_token = _get_zoho_secret("ZOHO_REFRESH_TOKEN")
     if not (client_id and client_secret and refresh_token):
-        return None
+        return None, "Zoho credentials not configured."
     try:
         access_token = _get_zoho_access_token(client_id, client_secret, refresh_token)
         resp = requests.get(
@@ -200,13 +210,21 @@ def _fetch_moms_module_api_name(portal_id: str) -> str | None:
             headers={"Authorization": f"Zoho-oauthtoken {access_token}"},
             timeout=10,
         )
+        if resp.status_code == 401:
+            return None, (
+                "Insufficient OAuth scope. Regenerate your Zoho refresh token at "
+                "api-console.zoho.in → Self Client with scope: "
+                "ZohoProjects.portals.ALL,ZohoProjects.projects.ALL,ZohoPC.files.ALL — "
+                "then update ZOHO_REFRESH_TOKEN in Streamlit secrets. "
+                "Or set ZOHO_MOMS_MODULE_NAME secret manually to bypass discovery."
+            )
         resp.raise_for_status()
         for mod in resp.json().get("modules", []):
             if mod.get("display_name", "").strip().lower() == "moms":
-                return mod.get("api_name")
-    except Exception:
-        pass
-    return None
+                return mod.get("api_name"), None
+        return None, "Module named 'MOMs' not found in portal. Check the display name in Zoho Settings → Custom Modules."
+    except Exception as exc:
+        return None, f"Module discovery failed: {exc}"
 
 
 def clean_lines(value: str) -> list[str]:
@@ -1025,9 +1043,9 @@ def push_mom_to_zoho(
     if not (client_id and client_secret and refresh_token):
         return False, "Zoho credentials not configured."
     try:
-        module_api_name = _fetch_moms_module_api_name(portal_id)
+        module_api_name, discovery_error = _fetch_moms_module_api_name(portal_id)
         if not module_api_name:
-            return False, "Could not find 'MOMs' custom module in Zoho portal."
+            return False, discovery_error or "Could not find 'MOMs' custom module in Zoho portal."
         access_token = _get_zoho_access_token(client_id, client_secret, refresh_token)
         record_name = f"{record.mom_number or record.meeting_title} \u2014 {record.meeting_date}"
         description = build_mom_zoho_description(record)
