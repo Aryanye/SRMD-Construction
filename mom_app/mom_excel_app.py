@@ -31,6 +31,7 @@ ZOHO_FALLBACK_OPTIONS = ["Vinay-Vivek", "NGH-A", "NGH-B", "NGH-C", "P2", "SRAH",
 NGH_PROJECT_OPTIONS = ["NGH-A", "NGH-B", "NGH-C"]
 MANUAL_PROJECT_OPTION = "Other (Enter manually)"
 ZOHO_PORTAL_ID_DEFAULT = "60062895348"
+ZOHO_MOMS_MODULE_API_NAME_DEFAULT = "moms"  # api_name Zoho assigns to the MOMs custom module
 DEFAULT_TEMPLATE_PATH = "mom_app/SRMD MOM Format.xlsx"
 DISCUSSION_START_ROW = 19
 BASE_DISCUSSION_ROWS = 9
@@ -186,45 +187,40 @@ def get_zoho_project_id(name: str) -> str | None:
 
 
 @st.cache_data(ttl=3600)
-def _fetch_moms_module_api_name(portal_id: str) -> tuple[str | None, str | None]:
-    """Discovers the api_name and record endpoint for the 'MOMs' custom module.
-    Returns (api_name, error_hint). Cached 1 hour.
+def _get_moms_module_api_name(portal_id: str) -> str:
+    """Returns the api_name for the 'MOMs' custom module. Cached 1 hour.
 
-    Requires OAuth scope: ZohoProjects.portals.ALL
-    Manual override: set ZOHO_MOMS_MODULE_NAME secret to skip discovery.
+    Resolution order:
+      1. ZOHO_MOMS_MODULE_NAME secret (manual override)
+      2. GET /api/v3/portal/{portal_id}/settings/modules (requires ZohoProjects.custom_fields.READ)
+      3. Hardcoded default "moms"
     """
-    # Allow manual override via secret (bypasses scope requirement)
     manual = _get_zoho_secret("ZOHO_MOMS_MODULE_NAME")
     if manual:
-        return manual, None
+        return manual
 
     client_id = _get_zoho_secret("ZOHO_CLIENT_ID")
     client_secret = _get_zoho_secret("ZOHO_CLIENT_SECRET")
     refresh_token = _get_zoho_secret("ZOHO_REFRESH_TOKEN")
-    if not (client_id and client_secret and refresh_token):
-        return None, "Zoho credentials not configured."
-    try:
-        access_token = _get_zoho_access_token(client_id, client_secret, refresh_token)
-        resp = requests.get(
-            f"https://projectsapi.zoho.in/api/v3/portal/{portal_id}/settings/modules",
-            headers={"Authorization": f"Zoho-oauthtoken {access_token}"},
-            timeout=10,
-        )
-        if resp.status_code == 401:
-            return None, (
-                "Insufficient OAuth scope. Regenerate your Zoho refresh token at "
-                "api-console.zoho.in → Self Client with scope: "
-                "ZohoProjects.portals.ALL,ZohoProjects.projects.ALL,ZohoPC.files.ALL — "
-                "then update ZOHO_REFRESH_TOKEN in Streamlit secrets. "
-                "Or set ZOHO_MOMS_MODULE_NAME secret manually to bypass discovery."
+
+    if client_id and client_secret and refresh_token:
+        try:
+            access_token = _get_zoho_access_token(client_id, client_secret, refresh_token)
+            resp = requests.get(
+                f"https://projectsapi.zoho.in/api/v3/portal/{portal_id}/settings/modules",
+                headers={"Authorization": f"Zoho-oauthtoken {access_token}"},
+                timeout=10,
             )
-        resp.raise_for_status()
-        for mod in resp.json().get("modules", []):
-            if mod.get("display_name", "").strip().lower() == "moms":
-                return mod.get("api_name"), None
-        return None, "Module named 'MOMs' not found in portal. Check the display name in Zoho Settings → Custom Modules."
-    except Exception as exc:
-        return None, f"Module discovery failed: {exc}"
+            if resp.ok:
+                for mod in resp.json().get("modules", []):
+                    if mod.get("singular_name", "").strip().lower() == "mom" or \
+                       mod.get("plural_name", "").strip().lower() == "moms" or \
+                       mod.get("api_name", "").strip().lower() == "moms":
+                        return str(mod["api_name"])
+        except Exception:
+            pass
+
+    return ZOHO_MOMS_MODULE_API_NAME_DEFAULT
 
 
 def clean_lines(value: str) -> list[str]:
@@ -1043,35 +1039,41 @@ def push_mom_to_zoho(
     if not (client_id and client_secret and refresh_token):
         return False, "Zoho credentials not configured."
     try:
-        module_api_name, discovery_error = _fetch_moms_module_api_name(portal_id)
-        if not module_api_name:
-            return False, discovery_error or "Could not find 'MOMs' custom module in Zoho portal."
+        module_api_name = _get_moms_module_api_name(portal_id)
         access_token = _get_zoho_access_token(client_id, client_secret, refresh_token)
         record_name = f"{record.mom_number or record.meeting_title} \u2014 {record.meeting_date}"
         description = build_mom_zoho_description(record)
-        base = (
-            f"https://projectsapi.zoho.in/api/v3/portal/{portal_id}"
-            f"/projects/{project_id}"
-        )
-        # Create the MOMs record
+
+        headers = {"Authorization": f"Zoho-oauthtoken {access_token}"}
+        # Correct V3 endpoint: /api/v3/portal/{portal_id}/module/{api_name}/entities
+        # Scope: ZohoProjects.portals.CREATE (covered by portals.ALL)
+        base = f"https://projectsapi.zoho.in/api/v3/portal/{portal_id}/module/{module_api_name}"
+
+        # Create the MOMs entity; project field links it to the right project
         create_resp = requests.post(
-            f"{base}/{module_api_name}/",
-            headers={"Authorization": f"Zoho-oauthtoken {access_token}"},
-            json={"name": record_name, "description": description},
+            f"{base}/entities",
+            headers=headers,
+            json={"name": record_name, "description": description, "project": {"id": project_id}},
             timeout=15,
         )
-        create_resp.raise_for_status()
+        if not create_resp.ok:
+            return False, (
+                f"Failed to create Zoho record [{module_api_name}] ({create_resp.status_code}): "
+                f"{create_resp.text[:400]}"
+            )
         data = create_resp.json()
-        record_id = (
-            data.get("data", {}).get("id")
-            or (data.get(module_api_name) or [{}])[0].get("id")
-        )
+        # Response shape: {"entity": {"id": ...}} or {"entities": [{...}]}
+        entity = data.get("entity") or (data.get("entities") or [{}])[0]
+        record_id = entity.get("id")
         if not record_id:
-            return False, "Record created but could not extract its ID — attachment skipped."
-        # Attach the Excel file
+            return True, (
+                f"MOM record created in Zoho but could not extract its ID — attachment skipped. "
+                f"Response: {str(data)[:200]}"
+            )
+        # Attach the Excel file — note: singular "entity" in attachment URL
         attach_resp = requests.post(
-            f"{base}/{module_api_name}/{record_id}/attachments/",
-            headers={"Authorization": f"Zoho-oauthtoken {access_token}"},
+            f"{base}/entity/{record_id}/attachments",
+            headers=headers,
             files={
                 "file": (
                     excel_filename,
@@ -1081,7 +1083,11 @@ def push_mom_to_zoho(
             },
             timeout=30,
         )
-        attach_resp.raise_for_status()
+        if not attach_resp.ok:
+            return True, (
+                f"MOM record created in Zoho (ID: {record_id}), but attachment failed "
+                f"({attach_resp.status_code}): {attach_resp.text[:200]}"
+            )
         return True, f"MOM record created in Zoho (ID: {record_id}) with Excel attached."
     except Exception as exc:
         return False, f"Zoho push failed: {exc}"
