@@ -119,31 +119,34 @@ def _get_zoho_secret(key: str) -> str:
     return str(st.secrets.get(key, "") or os.getenv(key, ""))
 
 
+def _get_zoho_access_token(client_id: str, client_secret: str, refresh_token: str) -> str:
+    """Exchange refresh token for access token (India region). Raises on failure."""
+    resp = requests.post(
+        "https://accounts.zoho.in/oauth/v2/token",
+        params={
+            "grant_type": "refresh_token",
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "refresh_token": refresh_token,
+        },
+        timeout=10,
+    )
+    resp.raise_for_status()
+    return resp.json()["access_token"]
+
+
 @st.cache_data(ttl=300)
-def fetch_zoho_project_options() -> list[str]:
-    """Fetch active Zoho projects whose names contain 'Project'. Cached 5 min."""
+def _fetch_zoho_projects_raw() -> dict[str, str]:
+    """Returns {project_name: project_id} for active projects containing 'project'.
+    Returns {} if credentials are missing or the call fails."""
     client_id = _get_zoho_secret("ZOHO_CLIENT_ID")
     client_secret = _get_zoho_secret("ZOHO_CLIENT_SECRET")
     refresh_token = _get_zoho_secret("ZOHO_REFRESH_TOKEN")
     portal_id = _get_zoho_secret("ZOHO_PORTAL_ID") or ZOHO_PORTAL_ID_DEFAULT
-
     if not (client_id and client_secret and refresh_token):
-        return ZOHO_FALLBACK_OPTIONS
-
+        return {}
     try:
-        token_resp = requests.post(
-            "https://accounts.zoho.in/oauth/v2/token",
-            params={
-                "grant_type": "refresh_token",
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "refresh_token": refresh_token,
-            },
-            timeout=10,
-        )
-        token_resp.raise_for_status()
-        access_token = token_resp.json()["access_token"]
-
+        access_token = _get_zoho_access_token(client_id, client_secret, refresh_token)
         projects: list[dict] = []
         page = 1
         while True:
@@ -161,15 +164,49 @@ def fetch_zoho_project_options() -> list[str]:
             if len(batch) < 100:
                 break
             page += 1
-
-        filtered = sorted(
-            p["name"].strip()
+        return {
+            p["name"].strip(): str(p["id"])
             for p in projects
             if "project" in p["name"].lower()
-        )
-        return filtered if filtered else ZOHO_FALLBACK_OPTIONS
+        }
     except Exception:
-        return ZOHO_FALLBACK_OPTIONS
+        return {}
+
+
+@st.cache_data(ttl=300)
+def fetch_zoho_project_options() -> list[str]:
+    """Sorted list of project names containing 'Project'. Falls back to ZOHO_FALLBACK_OPTIONS."""
+    mapping = _fetch_zoho_projects_raw()
+    return sorted(mapping.keys()) if mapping else ZOHO_FALLBACK_OPTIONS
+
+
+def get_zoho_project_id(name: str) -> str | None:
+    """Returns the Zoho project ID for a given project name, or None if not found."""
+    return _fetch_zoho_projects_raw().get(name)
+
+
+@st.cache_data(ttl=3600)
+def _fetch_moms_module_api_name(portal_id: str) -> str | None:
+    """Discovers the api_name of the custom module with display_name 'MOMs'. Cached 1 hour."""
+    client_id = _get_zoho_secret("ZOHO_CLIENT_ID")
+    client_secret = _get_zoho_secret("ZOHO_CLIENT_SECRET")
+    refresh_token = _get_zoho_secret("ZOHO_REFRESH_TOKEN")
+    if not (client_id and client_secret and refresh_token):
+        return None
+    try:
+        access_token = _get_zoho_access_token(client_id, client_secret, refresh_token)
+        resp = requests.get(
+            f"https://projectsapi.zoho.in/api/v3/portal/{portal_id}/settings/modules",
+            headers={"Authorization": f"Zoho-oauthtoken {access_token}"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        for mod in resp.json().get("modules", []):
+            if mod.get("display_name", "").strip().lower() == "moms":
+                return mod.get("api_name")
+    except Exception:
+        pass
+    return None
 
 
 def clean_lines(value: str) -> list[str]:
@@ -945,6 +982,93 @@ def build_email_draft(record: MeetingRecord) -> str:
     return "\n".join(lines)
 
 
+def build_mom_zoho_description(record: MeetingRecord) -> str:
+    """Builds a plain-text key-points summary for the Zoho MOMs record."""
+    lines = [
+        f"Meeting: {record.meeting_title}",
+        f"Date: {record.meeting_date}",
+        f"Place: {record.place}",
+    ]
+    if record.mom_number:
+        lines.append(f"Ref: {record.mom_number}")
+    attendees = record.attendees[:10]
+    suffix = f" + {len(record.attendees) - 10} more" if len(record.attendees) > 10 else ""
+    lines += ["", f"Attendees: {', '.join(attendees)}{suffix}", "", "Key Points:"]
+    open_pts = [dp for dp in record.discussion_points if dp.status in {"Open", "In Progress"}]
+    for i, dp in enumerate(open_pts[:15], 1):
+        row = f"  {i}. [{dp.discipline_of_work}] {dp.point_of_discussion}"
+        if dp.conclusion_or_remark:
+            row += f"\n     \u2192 {dp.conclusion_or_remark}"
+        if dp.responsible_party:
+            row += f"\n     Owner: {dp.responsible_party} | Due: {dp.target_date} | Status: {dp.status}"
+        lines.append(row)
+    if record.next_meeting_date or record.next_meeting_place:
+        lines += [
+            "",
+            f"Next Meeting: {record.next_meeting_date} at {record.next_meeting_place}".strip(),
+        ]
+    return "\n".join(lines)
+
+
+def push_mom_to_zoho(
+    record: MeetingRecord,
+    project_id: str,
+    excel_bytes: bytes,
+    excel_filename: str,
+) -> tuple[bool, str]:
+    """Creates a MOM record in the Zoho Projects custom MOMs module and attaches the Excel.
+    Returns (success, message). Never raises — all exceptions are caught."""
+    client_id = _get_zoho_secret("ZOHO_CLIENT_ID")
+    client_secret = _get_zoho_secret("ZOHO_CLIENT_SECRET")
+    refresh_token = _get_zoho_secret("ZOHO_REFRESH_TOKEN")
+    portal_id = _get_zoho_secret("ZOHO_PORTAL_ID") or ZOHO_PORTAL_ID_DEFAULT
+    if not (client_id and client_secret and refresh_token):
+        return False, "Zoho credentials not configured."
+    try:
+        module_api_name = _fetch_moms_module_api_name(portal_id)
+        if not module_api_name:
+            return False, "Could not find 'MOMs' custom module in Zoho portal."
+        access_token = _get_zoho_access_token(client_id, client_secret, refresh_token)
+        record_name = f"{record.mom_number or record.meeting_title} \u2014 {record.meeting_date}"
+        description = build_mom_zoho_description(record)
+        base = (
+            f"https://projectsapi.zoho.in/api/v3/portal/{portal_id}"
+            f"/projects/{project_id}"
+        )
+        # Create the MOMs record
+        create_resp = requests.post(
+            f"{base}/{module_api_name}/",
+            headers={"Authorization": f"Zoho-oauthtoken {access_token}"},
+            json={"name": record_name, "description": description},
+            timeout=15,
+        )
+        create_resp.raise_for_status()
+        data = create_resp.json()
+        record_id = (
+            data.get("data", {}).get("id")
+            or (data.get(module_api_name) or [{}])[0].get("id")
+        )
+        if not record_id:
+            return False, "Record created but could not extract its ID — attachment skipped."
+        # Attach the Excel file
+        attach_resp = requests.post(
+            f"{base}/{module_api_name}/{record_id}/attachments/",
+            headers={"Authorization": f"Zoho-oauthtoken {access_token}"},
+            files={
+                "file": (
+                    excel_filename,
+                    excel_bytes,
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            },
+            timeout=30,
+        )
+        attach_resp.raise_for_status()
+        return True, f"MOM record created in Zoho (ID: {record_id}) with Excel attached."
+    except Exception as exc:
+        return False, f"Zoho push failed: {exc}"
+
+
 def run_app() -> None:
     st.set_page_config(page_title=APP_TITLE, layout="wide")
     st.title(APP_TITLE)
@@ -1139,6 +1263,24 @@ def run_app() -> None:
                 generated_pdf = build_pdf_report(record)
 
             st.success("Excel MOM generated successfully.")
+
+            _zoho_project_id = get_zoho_project_id(project_name) if project_name else None
+            if _zoho_project_id:
+                _excel_fname = sanitize_filename(
+                    f"{record.project_name}_{record.meeting_date}_MOM"
+                    + (f"_{sanitize_filename(record.mom_number)}" if record.mom_number else "")
+                ) + ".xlsx"
+                with st.spinner("Pushing MOM to Zoho Projects..."):
+                    _zoho_ok, _zoho_msg = push_mom_to_zoho(
+                        record=record,
+                        project_id=_zoho_project_id,
+                        excel_bytes=generated_workbook,
+                        excel_filename=_excel_fname,
+                    )
+                if _zoho_ok:
+                    st.success(f"Zoho: {_zoho_msg}")
+                else:
+                    st.warning(f"Zoho push: {_zoho_msg}")
 
             _STATUS_STYLE_MAP = {
                 "Open": "background-color: #ffe0e0",
