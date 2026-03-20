@@ -1086,9 +1086,12 @@ def push_mom_to_zoho(
                 f"{create_resp.text[:400]}"
             )
         data = create_resp.json()
-        # Response shape: {"entity": {"id": ...}} or {"entities": [{...}]}
-        entity = data.get("entity") or (data.get("entities") or [{}])[0]
-        record_id = entity.get("id")
+        # Response shape: {"id": ...} (flat) OR {"entity": {"id": ...}} OR {"entities": [{...}]}
+        record_id = (
+            data.get("id")
+            or (data.get("entity") or {}).get("id")
+            or (data.get("entities") or [{}])[0].get("id")
+        )
         if not record_id:
             return True, (
                 f"MOM record created in Zoho but could not extract its ID — attachment skipped. "
