@@ -1190,19 +1190,41 @@ def push_mom_to_zoho(
                 f"Response: {str(data)[:200]}"
             )
 
-        # Upload Excel directly to the project using the v2 REST API
-        # (v3 global upload requires portal-level "Upload Rule" config which isn't set)
+        # Step 1: Get project folder ID (required for document upload)
+        folders_resp = requests.get(
+            f"https://projectsapi.zoho.in/restapi/portal/{portal_id}"
+            f"/projects/{project_id}/folders/",
+            headers=headers,
+            timeout=15,
+        )
+        folder_id = None
+        if folders_resp.ok:
+            folders_data = folders_resp.json()
+            folders = folders_data.get("folders") or []
+            if folders:
+                folder_id = folders[0].get("id")
+
+        if not folder_id:
+            return True, (
+                f"MOM record created (ID: {record_id}). "
+                f"Excel attachment skipped — could not find a document folder in this project. "
+                f"Please create at least one folder in the project's Documents section."
+            )
+
+        # Step 2: Upload Excel to the project documents folder
+        # Field name is 'uploaddoc' per Zoho Projects documents API
         upload_resp = requests.post(
             f"https://projectsapi.zoho.in/restapi/portal/{portal_id}"
             f"/projects/{project_id}/documents/",
             headers=headers,
             files={
-                "file": (
+                "uploaddoc": (
                     excel_filename,
                     excel_bytes,
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
             },
+            data={"folder_id": folder_id},
             timeout=30,
         )
         if not upload_resp.ok:
@@ -1210,9 +1232,30 @@ def push_mom_to_zoho(
                 f"MOM record created (ID: {record_id}), but file upload failed "
                 f"({upload_resp.status_code}): {upload_resp.text[:300]}"
             )
-        return True, (
-            f"MOM record created in Zoho (ID: {record_id}) and Excel uploaded to project documents."
+        upload_data = upload_resp.json()
+        doc_list = upload_data if isinstance(upload_data, list) else upload_data.get("documents", [])
+        doc_id = doc_list[0].get("id") if doc_list else None
+
+        if not doc_id:
+            return True, (
+                f"MOM record created (ID: {record_id}), Excel uploaded to project documents "
+                f"but could not read document ID. Response: {str(upload_data)[:200]}"
+            )
+
+        # Step 3: Associate the uploaded document with the MOMs entity
+        assoc_resp = requests.post(
+            f"https://projectsapi.zoho.in/api/v3/portal/{portal_id}"
+            f"/projects/{project_id}/attachments/{doc_id}",
+            headers=headers,
+            json={"entity_id": record_id, "entity_type": module_api_name},
+            timeout=15,
         )
+        if not assoc_resp.ok:
+            return True, (
+                f"MOM record created (ID: {record_id}), Excel uploaded (doc ID: {doc_id}), "
+                f"but association failed ({assoc_resp.status_code}): {assoc_resp.text[:300]}"
+            )
+        return True, f"MOM record created in Zoho (ID: {record_id}) with Excel attached successfully."
     except Exception as exc:
         return False, f"Zoho push failed: {exc}"
 
