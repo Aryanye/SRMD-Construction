@@ -1189,9 +1189,14 @@ def push_mom_to_zoho(
                 f"MOM record created in Zoho but could not extract its ID — attachment skipped. "
                 f"Response: {str(data)[:200]}"
             )
-        # Step 1: Upload file to portal-level global attachments store
-        upload_resp = requests.post(
-            f"https://projectsapi.zoho.in/api/v3/portal/{portal_id}/attachments",
+
+        # Attach Excel directly to the custom module entity
+        attach_url = (
+            f"https://projectsapi.zoho.in/api/v3/portal/{portal_id}"
+            f"/module/{module_api_name}/entity/{record_id}/attachments"
+        )
+        attach_resp = requests.post(
+            attach_url,
             headers=headers,
             files={
                 "file": (
@@ -1202,42 +1207,12 @@ def push_mom_to_zoho(
             },
             timeout=30,
         )
-        if not upload_resp.ok:
-            err_body = upload_resp.json() if upload_resp.text else {}
-            err_title = (err_body.get("error") or {}).get("title", "")
-            if err_title == "UPLOAD_RULE_NOT_CONFIGURED":
-                return True, (
-                    f"MOM record created in Zoho (ID: {record_id}). "
-                    f"Excel attachment skipped — enable WorkDrive in Zoho Projects portal settings to support file uploads."
-                )
+        if not attach_resp.ok:
             return True, (
-                f"MOM record created (ID: {record_id}), but file upload failed "
-                f"({upload_resp.status_code}): {upload_resp.text[:200]}"
+                f"MOM record created (ID: {record_id}), but attachment failed "
+                f"({attach_resp.status_code}): {attach_resp.text[:300]}"
             )
-        upload_data = upload_resp.json()
-        attachment_id = (
-            upload_data.get("id")
-            or (upload_data.get("attachment") or {}).get("id")
-            or (upload_data.get("attachments") or [{}])[0].get("id")
-        )
-        if not attachment_id:
-            return True, (
-                f"MOM record created (ID: {record_id}), file uploaded but could not get "
-                f"attachment ID. Response: {str(upload_data)[:200]}"
-            )
-        # Step 2: Associate attachment with the custom module entity
-        assoc_resp = requests.post(
-            f"https://projectsapi.zoho.in/api/v3/portal/{portal_id}/projects/{project_id}/attachments/{attachment_id}",
-            headers=headers,
-            json={"entity_type": module_api_name, "entity_id": record_id},
-            timeout=15,
-        )
-        if not assoc_resp.ok:
-            return True, (
-                f"MOM record created (ID: {record_id}), file uploaded (ID: {attachment_id}), "
-                f"but association failed ({assoc_resp.status_code}): {assoc_resp.text[:200]}"
-            )
-        return True, f"MOM record created in Zoho (ID: {record_id}) with Excel attached."
+        return True, f"MOM record created in Zoho (ID: {record_id}) with Excel attached successfully."
     except Exception as exc:
         return False, f"Zoho push failed: {exc}"
 
