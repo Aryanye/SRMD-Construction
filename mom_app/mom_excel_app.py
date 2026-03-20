@@ -1111,6 +1111,13 @@ def push_mom_to_zoho(
             timeout=30,
         )
         if not upload_resp.ok:
+            err_body = upload_resp.json() if upload_resp.text else {}
+            err_title = (err_body.get("error") or {}).get("title", "")
+            if err_title == "UPLOAD_RULE_NOT_CONFIGURED":
+                return True, (
+                    f"MOM record created in Zoho (ID: {record_id}). "
+                    f"Excel attachment skipped — enable WorkDrive in Zoho Projects portal settings to support file uploads."
+                )
             return True, (
                 f"MOM record created (ID: {record_id}), but file upload failed "
                 f"({upload_resp.status_code}): {upload_resp.text[:200]}"
