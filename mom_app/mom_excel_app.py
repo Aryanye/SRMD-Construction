@@ -1030,11 +1030,11 @@ def build_mom_zoho_description(record: MeetingRecord) -> str:
 
 
 def _to_zoho_date(date_str: str) -> str:
-    """Convert any common date string to Zoho's required MM-DD-YYYY format."""
+    """Convert any common date string to Zoho's required YYYY-MM-DD format."""
     from datetime import datetime
-    for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%m/%d/%Y", "%m-%d-%Y", "%d/%m/%y", "%d-%m-%y"):
+    for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%m/%d/%Y", "%m-%d-%Y", "%Y-%m-%d", "%d/%m/%y", "%d-%m-%y"):
         try:
-            return datetime.strptime(date_str.strip(), fmt).strftime("%m-%d-%Y")
+            return datetime.strptime(date_str.strip(), fmt).strftime("%Y-%m-%d")
         except ValueError:
             continue
     return date_str  # return as-is if unparseable
