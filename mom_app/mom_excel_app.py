@@ -1054,11 +1054,19 @@ def push_mom_to_zoho(
         # Scope: ZohoProjects.portals.CREATE (covered by portals.ALL)
         base = f"https://projectsapi.zoho.in/api/v3/portal/{portal_id}/module/{module_api_name}"
 
+        # Build payload — include mandatory layout fields
+        payload: dict = {
+            "name": record_name,
+            "description": description,
+            "project": {"id": project_id},
+            "date_of_decision": record.meeting_date,  # maps to the mandatory date field
+        }
+
         # Create the MOMs entity; project field links it to the right project
         create_resp = requests.post(
             f"{base}/entities",
             headers=headers,
-            json={"name": record_name, "description": description, "project": {"id": project_id}},
+            json=payload,
             timeout=15,
         )
         if not create_resp.ok:
