@@ -1190,37 +1190,68 @@ def push_mom_to_zoho(
                 f"Response: {str(data)[:200]}"
             )
 
-        # Step 1: Upload Excel to global portal attachments
-        # Requires ZohoProjects.documents.CREATE scope + WorkDrive configured
-        upload_resp = requests.post(
-            f"https://projectsapi.zoho.in/api/v3/portal/{portal_id}/attachments",
+        # Step 1: Get project folder ID via v2 folders endpoint (res_id is the field)
+        folder_id = None
+        folders_resp = requests.get(
+            f"https://projectsapi.zoho.in/restapi/portal/{portal_id}"
+            f"/projects/{project_id}/folders/",
             headers=headers,
-            files={
-                "file": (
-                    excel_filename,
-                    excel_bytes,
-                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                )
-            },
-            timeout=30,
+            timeout=15,
         )
-        if not upload_resp.ok:
-            return True, (
-                f"MOM record created (ID: {record_id}), but file upload failed "
-                f"({upload_resp.status_code}): {upload_resp.text[:400]}"
+        if folders_resp.ok:
+            for f in (folders_resp.json().get("folders") or []):
+                fid = f.get("res_id") or f.get("id")
+                if fid:
+                    folder_id = fid
+                    break
+
+        # Step 2: Try v3 global upload first; fall back to v2 project documents upload
+        attachment_id = None
+        if not folder_id:
+            # No folder found — try v3 global portal upload (needs upload rule configured)
+            up = requests.post(
+                f"https://projectsapi.zoho.in/api/v3/portal/{portal_id}/attachments",
+                headers=headers,
+                files={"file": (excel_filename, excel_bytes,
+                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+                timeout=30,
             )
-        upload_data = upload_resp.json()
-        attachment_id = (
-            upload_data.get("id")
-            or (upload_data.get("attachments") or [{}])[0].get("id")
-        )
+            if up.ok:
+                d = up.json()
+                attachment_id = d.get("id") or (d.get("attachments") or [{}])[0].get("id")
+            else:
+                return True, (
+                    f"MOM record created (ID: {record_id}). "
+                    f"File upload skipped — no project folder found and global upload failed "
+                    f"({up.status_code}): {up.text[:300]}"
+                )
+        else:
+            # Upload via v2 project documents API (uploaddoc field + folder_id required)
+            up = requests.post(
+                f"https://projectsapi.zoho.in/restapi/portal/{portal_id}"
+                f"/projects/{project_id}/documents/",
+                headers=headers,
+                files={"uploaddoc": (excel_filename, excel_bytes,
+                                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+                data={"folder_id": folder_id},
+                timeout=30,
+            )
+            if not up.ok:
+                return True, (
+                    f"MOM record created (ID: {record_id}), but file upload failed "
+                    f"({up.status_code}): {up.text[:400]}"
+                )
+            d = up.json()
+            docs = d if isinstance(d, list) else (d.get("documents") or [])
+            attachment_id = (docs[0].get("id") or docs[0].get("res_id")) if docs else None
+
         if not attachment_id:
             return True, (
                 f"MOM record created (ID: {record_id}), file uploaded but could not "
-                f"read attachment ID. Response: {str(upload_data)[:300]}"
+                f"read attachment ID. Response: {str(d)[:300]}"
             )
 
-        # Step 2: Associate the uploaded file with the MOMs entity
+        # Step 3: Associate attachment with the MOMs entity
         assoc_resp = requests.post(
             f"https://projectsapi.zoho.in/api/v3/portal/{portal_id}"
             f"/attachments/{attachment_id}/associate",
