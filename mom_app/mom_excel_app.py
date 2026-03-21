@@ -1207,6 +1207,7 @@ def push_mom_to_zoho(
 
         # Step 2: Try v3 global upload first; fall back to v2 project documents upload
         attachment_id = None
+        folders_debug = f"folders_status={folders_resp.status_code}, folders_body={folders_resp.text[:300]}"
         if not folder_id:
             # No folder found — try v3 global portal upload (needs upload rule configured)
             up = requests.post(
@@ -1222,8 +1223,8 @@ def push_mom_to_zoho(
             else:
                 return True, (
                     f"MOM record created (ID: {record_id}). "
-                    f"File upload skipped — no project folder found and global upload failed "
-                    f"({up.status_code}): {up.text[:300]}"
+                    f"File upload skipped — no project folder found [{folders_debug}] "
+                    f"and global upload failed ({up.status_code}): {up.text[:300]}"
                 )
         else:
             # Upload via v2 project documents API (uploaddoc field + folder_id required)
