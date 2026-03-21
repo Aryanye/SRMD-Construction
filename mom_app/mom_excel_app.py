@@ -1202,7 +1202,7 @@ def push_mom_to_zoho(
             folders_data = folders_resp.json()
             folders = folders_data.get("folders") or []
             if folders:
-                folder_id = folders[0].get("id")
+                folder_id = folders[0].get("res_id") or folders[0].get("id")
 
         if not folder_id:
             return True, (
