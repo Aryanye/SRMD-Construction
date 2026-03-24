@@ -178,26 +178,27 @@ header[data-testid="stHeader"] {background: transparent !important;}
     border-color: var(--border-hover) !important;
 }
 
-/* ── All buttons — force readable text on their background ── */
-button[data-testid="stBaseButton-primary"],
-button[data-testid="stBaseButton-primary"] *,
-button[data-testid="stBaseButton-primary"] p,
-button[data-testid="stBaseButton-primary"] span {
-    background: var(--primary) !important;
+/* ── Primary button ── */
+button[data-testid="stBaseButton-primary"] {
+    background: linear-gradient(135deg, #3E4C59 0%, #556270 100%) !important;
     border: none !important;
     border-radius: var(--radius) !important;
-    padding: 0.6rem 1.8rem !important;
+    padding: 0.55rem 1.8rem !important;
     font-family: 'Inter', sans-serif !important;
     font-weight: 600 !important;
-    font-size: 0.88rem !important;
+    font-size: 0.86rem !important;
     letter-spacing: 0.2px !important;
     color: #ffffff !important;
-    box-shadow: var(--shadow-sm) !important;
+    box-shadow: 0 2px 8px rgba(62,76,89,0.25) !important;
     transition: all var(--transition) !important;
 }
+button[data-testid="stBaseButton-primary"] p,
+button[data-testid="stBaseButton-primary"] span {
+    color: #ffffff !important;
+}
 button[data-testid="stBaseButton-primary"]:hover {
-    background: var(--primary-hover) !important;
-    box-shadow: var(--shadow-md) !important;
+    background: linear-gradient(135deg, #2d3a45 0%, #4a5568 100%) !important;
+    box-shadow: 0 4px 14px rgba(62,76,89,0.35) !important;
     transform: translateY(-1px) !important;
 }
 
@@ -206,7 +207,7 @@ button[data-testid="stBaseButton-primary"]:hover {
 button[data-testid="stBaseButton-secondary"] {
     border-radius: var(--radius) !important;
     border: 1px solid var(--border) !important;
-    background: var(--surface) !important;
+    background: linear-gradient(135deg, #FFFFFF 0%, #F4F6F8 100%) !important;
     color: var(--text-secondary) !important;
     font-family: 'Inter', sans-serif !important;
     font-weight: 500 !important;
@@ -214,37 +215,47 @@ button[data-testid="stBaseButton-secondary"] {
     box-shadow: var(--shadow-sm) !important;
     transition: all var(--transition) !important;
 }
-.stDownloadButton > button *,
-button[data-testid="stBaseButton-secondary"] * {
+.stDownloadButton > button p, .stDownloadButton > button span,
+button[data-testid="stBaseButton-secondary"] p,
+button[data-testid="stBaseButton-secondary"] span {
     color: var(--text-secondary) !important;
 }
 .stDownloadButton > button:hover,
 button[data-testid="stBaseButton-secondary"]:hover {
     border-color: var(--primary) !important;
-    color: var(--primary) !important;
-    background: var(--surface-raised) !important;
+    background: linear-gradient(135deg, #F4F6F8 0%, #E8ECF0 100%) !important;
     box-shadow: var(--shadow-md) !important;
 }
-.stDownloadButton > button:hover *,
-button[data-testid="stBaseButton-secondary"]:hover * {
+.stDownloadButton > button:hover p, .stDownloadButton > button:hover span,
+button[data-testid="stBaseButton-secondary"]:hover p,
+button[data-testid="stBaseButton-secondary"]:hover span {
     color: var(--primary) !important;
 }
 
-/* ── File uploader button & all other Streamlit buttons ── */
-div[data-testid="stFileUploader"] button,
-div[data-testid="stFileUploader"] button * {
-    background: var(--surface) !important;
+/* ── File uploader Browse button ── */
+div[data-testid="stFileUploader"] button {
+    background: linear-gradient(135deg, #FFFFFF 0%, #F4F6F8 100%) !important;
     color: var(--text-secondary) !important;
     border: 1px solid var(--border) !important;
     border-radius: var(--radius) !important;
     font-family: 'Inter', sans-serif !important;
     font-weight: 500 !important;
     font-size: 0.82rem !important;
+    transition: all var(--transition) !important;
 }
-div[data-testid="stFileUploader"] button:hover,
-div[data-testid="stFileUploader"] button:hover * {
+div[data-testid="stFileUploader"] button p,
+div[data-testid="stFileUploader"] button span {
+    color: var(--text-secondary) !important;
+}
+div[data-testid="stFileUploader"] button:hover {
     border-color: var(--primary) !important;
-    color: var(--primary) !important;
+    background: linear-gradient(135deg, #F4F6F8 0%, #E8ECF0 100%) !important;
+}
+
+/* ── File uploader drag text ── */
+div[data-testid="stFileUploader"] section small,
+div[data-testid="stFileUploader"] section span {
+    color: var(--text-muted) !important;
 }
 
 /* ── Tabs ── */
