@@ -334,29 +334,47 @@ div[data-testid="stFileUploader"] section:hover {
     border-color: var(--secondary) !important;
 }
 
-/* ── Sidebar toggle / collapse button ── */
+/* ── Sidebar toggle / collapse button — catch-all approach ── */
+[data-testid="collapsedControl"],
+[data-testid="collapsedControl"] button,
+[data-testid="stSidebarCollapsedControl"],
+[data-testid="stSidebarCollapsedControl"] button,
 button[data-testid="stBaseButton-header"],
 button[data-testid="stBaseButton-headerNoPadding"],
 button[kind="header"],
-button[data-testid="collapsedControl"],
-div[data-testid="collapsedControl"] > button,
-div[data-testid="collapsedControl"],
-.stAppViewBlockContainer button[kind="header"] {
+.st-emotion-cache-iiif1v,
+header button {
     background: var(--surface) !important;
     border: 1px solid var(--border) !important;
     border-radius: var(--radius) !important;
-    box-shadow: var(--shadow-sm) !important;
+    box-shadow: var(--shadow-md) !important;
     color: var(--primary) !important;
     opacity: 1 !important;
 }
+[data-testid="collapsedControl"] svg,
+[data-testid="collapsedControl"] button svg,
+[data-testid="stSidebarCollapsedControl"] svg,
+[data-testid="stSidebarCollapsedControl"] button svg,
 button[data-testid="stBaseButton-header"] svg,
 button[data-testid="stBaseButton-headerNoPadding"] svg,
 button[kind="header"] svg,
-button[data-testid="collapsedControl"] svg,
-div[data-testid="collapsedControl"] svg,
-div[data-testid="collapsedControl"] > button svg {
+header button svg {
     stroke: var(--primary) !important;
     color: var(--primary) !important;
+    fill: var(--primary) !important;
+    opacity: 1 !important;
+}
+/* Nuclear fallback: any small fixed-position button in top-left */
+.stApp > header button,
+.stApp > div:first-child button[kind] {
+    background: var(--surface) !important;
+    border: 1px solid var(--border) !important;
+    box-shadow: var(--shadow-md) !important;
+    opacity: 1 !important;
+}
+.stApp > header button svg,
+.stApp > div:first-child button[kind] svg {
+    stroke: var(--primary) !important;
     fill: var(--primary) !important;
     opacity: 1 !important;
 }
