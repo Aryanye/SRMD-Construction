@@ -178,8 +178,11 @@ header[data-testid="stHeader"] {background: transparent !important;}
     border-color: var(--border-hover) !important;
 }
 
-/* ── Primary button ── */
-button[data-testid="stBaseButton-primary"] {
+/* ── All buttons — force readable text on their background ── */
+button[data-testid="stBaseButton-primary"],
+button[data-testid="stBaseButton-primary"] *,
+button[data-testid="stBaseButton-primary"] p,
+button[data-testid="stBaseButton-primary"] span {
     background: var(--primary) !important;
     border: none !important;
     border-radius: var(--radius) !important;
@@ -211,12 +214,37 @@ button[data-testid="stBaseButton-secondary"] {
     box-shadow: var(--shadow-sm) !important;
     transition: all var(--transition) !important;
 }
+.stDownloadButton > button *,
+button[data-testid="stBaseButton-secondary"] * {
+    color: var(--text-secondary) !important;
+}
 .stDownloadButton > button:hover,
 button[data-testid="stBaseButton-secondary"]:hover {
     border-color: var(--primary) !important;
     color: var(--primary) !important;
     background: var(--surface-raised) !important;
     box-shadow: var(--shadow-md) !important;
+}
+.stDownloadButton > button:hover *,
+button[data-testid="stBaseButton-secondary"]:hover * {
+    color: var(--primary) !important;
+}
+
+/* ── File uploader button & all other Streamlit buttons ── */
+div[data-testid="stFileUploader"] button,
+div[data-testid="stFileUploader"] button * {
+    background: var(--surface) !important;
+    color: var(--text-secondary) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: var(--radius) !important;
+    font-family: 'Inter', sans-serif !important;
+    font-weight: 500 !important;
+    font-size: 0.82rem !important;
+}
+div[data-testid="stFileUploader"] button:hover,
+div[data-testid="stFileUploader"] button:hover * {
+    border-color: var(--primary) !important;
+    color: var(--primary) !important;
 }
 
 /* ── Tabs ── */
