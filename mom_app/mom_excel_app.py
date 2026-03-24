@@ -258,6 +258,21 @@ div[data-testid="stFileUploader"] section span {
     color: var(--text-muted) !important;
 }
 
+/* ── Tooltips ── */
+div[data-testid="stTooltipContent"],
+div[role="tooltip"],
+div[data-baseweb="tooltip"] > div {
+    background: var(--surface) !important;
+    color: var(--text-primary) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: var(--radius) !important;
+    box-shadow: var(--shadow-md) !important;
+    font-size: 0.82rem !important;
+}
+div[data-baseweb="tooltip"] * {
+    color: var(--text-primary) !important;
+}
+
 /* ── Tabs ── */
 .stTabs [data-baseweb="tab-list"] {
     gap: 0;
