@@ -45,184 +45,186 @@ CUSTOM_CSS = """
 /* ── Font ── */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
+:root {
+    --accent: #4f8cff;
+    --accent-hover: #3a75e6;
+    --accent-subtle: rgba(79,140,255,0.08);
+    --accent-glow: rgba(79,140,255,0.18);
+    --surface: var(--background-color, #ffffff);
+    --surface-raised: var(--secondary-background-color, #f0f2f6);
+    --text-primary: var(--text-color, #1a1a2e);
+    --text-muted: rgba(128,128,128,0.85);
+    --border: rgba(128,128,128,0.15);
+    --border-hover: rgba(128,128,128,0.3);
+}
+
 html, body, [class*="css"] {
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
 }
 
-/* ── Page background ── */
-.stApp {
-    background: #f8f9fc;
-}
-
-/* ── Hide default header/footer ── */
-#MainMenu, header[data-testid="stHeader"], footer {visibility: hidden;}
+/* ── Hide default chrome ── */
+#MainMenu, footer {visibility: hidden;}
+header[data-testid="stHeader"] {background: transparent !important;}
 
 /* ── Branded header ── */
 .app-header {
-    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
-    padding: 1.8rem 2.2rem;
-    border-radius: 0 0 16px 16px;
-    margin: -1rem -1rem 1.5rem -1rem;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.12);
+    background: linear-gradient(135deg, #0d1b2a 0%, #1b2838 40%, #2a4060 100%);
+    padding: 2rem 2.5rem;
+    border-radius: 14px;
+    margin-bottom: 1.8rem;
+    border: 1px solid rgba(79,140,255,0.15);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.05);
 }
 .app-header h1 {
     color: #ffffff;
-    font-size: 1.65rem;
+    font-size: 1.5rem;
     font-weight: 700;
     margin: 0;
-    letter-spacing: -0.3px;
+    letter-spacing: -0.5px;
 }
 .app-header p {
-    color: rgba(255,255,255,0.65);
-    font-size: 0.88rem;
-    margin: 0.35rem 0 0 0;
-    font-weight: 300;
+    color: rgba(255,255,255,0.55);
+    font-size: 0.82rem;
+    margin: 0.3rem 0 0 0;
+    font-weight: 400;
 }
 
 /* ── Section headers ── */
 .section-header {
-    font-size: 0.82rem;
+    font-size: 0.72rem;
     font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.8px;
-    color: #6c757d;
-    margin-bottom: 0.6rem;
-    padding-bottom: 0.4rem;
-    border-bottom: 2px solid #e9ecef;
+    letter-spacing: 1.2px;
+    color: var(--text-muted);
+    margin-bottom: 0.8rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border);
 }
 
-/* ── Card containers ── */
-div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlock"] {
-    background: #ffffff;
-    border: 1px solid #e9ecef;
-    border-radius: 12px;
-    padding: 1.2rem;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.04);
-}
-
-/* ── Sidebar ── */
-section[data-testid="stSidebar"] {
-    background: #1a1a2e !important;
-}
-section[data-testid="stSidebar"] * {
-    color: #e0e0e0 !important;
-}
-section[data-testid="stSidebar"] .stSelectbox label,
-section[data-testid="stSidebar"] .stTextInput label {
-    color: rgba(255,255,255,0.7) !important;
-    font-size: 0.78rem;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}
-section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p {
-    font-size: 0.85rem;
-}
-
-/* ── Inputs ── */
-.stTextInput input, .stTextArea textarea, .stSelectbox > div > div {
+/* ── Inputs — theme-aware ── */
+.stTextInput input, .stTextArea textarea {
     border-radius: 8px !important;
-    border: 1px solid #dee2e6 !important;
-    font-size: 0.9rem !important;
-    transition: border-color 0.2s ease;
+    border: 1px solid var(--border) !important;
+    font-size: 0.88rem !important;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 .stTextInput input:focus, .stTextArea textarea:focus {
-    border-color: #0f3460 !important;
-    box-shadow: 0 0 0 2px rgba(15,52,96,0.1) !important;
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 0 3px var(--accent-glow) !important;
+}
+
+/* ── Select boxes ── */
+.stSelectbox [data-baseweb="select"] > div {
+    border-radius: 8px !important;
+    border: 1px solid var(--border) !important;
+    transition: border-color 0.2s ease;
+}
+.stSelectbox [data-baseweb="select"] > div:hover {
+    border-color: var(--border-hover) !important;
 }
 
 /* ── Primary button ── */
-.stButton > button[kind="primary"],
 button[data-testid="stBaseButton-primary"] {
-    background: linear-gradient(135deg, #0f3460, #1a1a2e) !important;
+    background: var(--accent) !important;
     border: none !important;
-    border-radius: 8px !important;
-    padding: 0.6rem 1.5rem !important;
+    border-radius: 10px !important;
+    padding: 0.65rem 2rem !important;
     font-weight: 600 !important;
-    font-size: 0.9rem !important;
-    letter-spacing: 0.2px !important;
-    box-shadow: 0 2px 8px rgba(15,52,96,0.25) !important;
-    transition: all 0.25s ease !important;
+    font-size: 0.88rem !important;
+    letter-spacing: 0.3px !important;
+    color: #ffffff !important;
+    box-shadow: 0 2px 12px rgba(79,140,255,0.3) !important;
+    transition: all 0.2s ease !important;
 }
 button[data-testid="stBaseButton-primary"]:hover {
-    box-shadow: 0 4px 16px rgba(15,52,96,0.35) !important;
+    background: var(--accent-hover) !important;
+    box-shadow: 0 4px 20px rgba(79,140,255,0.4) !important;
     transform: translateY(-1px) !important;
 }
 
-/* ── Secondary/download buttons ── */
+/* ── Secondary / download buttons ── */
 .stDownloadButton > button,
 button[data-testid="stBaseButton-secondary"] {
-    border-radius: 8px !important;
-    border: 1.5px solid #dee2e6 !important;
-    background: #ffffff !important;
-    color: #1a1a2e !important;
+    border-radius: 10px !important;
+    border: 1px solid var(--border) !important;
+    background: transparent !important;
+    color: var(--text-primary) !important;
     font-weight: 500 !important;
-    font-size: 0.85rem !important;
+    font-size: 0.84rem !important;
     transition: all 0.2s ease !important;
 }
 .stDownloadButton > button:hover,
 button[data-testid="stBaseButton-secondary"]:hover {
-    border-color: #0f3460 !important;
-    color: #0f3460 !important;
-    background: #f0f4ff !important;
+    border-color: var(--accent) !important;
+    color: var(--accent) !important;
+    background: var(--accent-subtle) !important;
 }
 
 /* ── Tabs ── */
 .stTabs [data-baseweb="tab-list"] {
     gap: 0;
-    border-bottom: 2px solid #e9ecef;
+    border-bottom: 1px solid var(--border);
 }
 .stTabs [data-baseweb="tab"] {
     font-weight: 500;
-    font-size: 0.88rem;
-    padding: 0.7rem 1.2rem;
-    border-radius: 8px 8px 0 0;
-    color: #6c757d;
+    font-size: 0.84rem;
+    padding: 0.65rem 1.1rem;
+    color: var(--text-muted);
+    border-bottom: 2px solid transparent;
+    transition: all 0.15s ease;
 }
 .stTabs [aria-selected="true"] {
-    color: #0f3460 !important;
-    border-bottom: 2.5px solid #0f3460;
+    color: var(--accent) !important;
+    border-bottom-color: var(--accent) !important;
     font-weight: 600;
 }
 
 /* ── Alerts ── */
 div[data-testid="stAlert"] {
-    border-radius: 8px !important;
-    font-size: 0.88rem;
-    border-left-width: 4px !important;
+    border-radius: 10px !important;
+    font-size: 0.85rem;
 }
 
 /* ── Expander ── */
 .streamlit-expanderHeader {
-    font-size: 0.85rem !important;
+    font-size: 0.84rem !important;
     font-weight: 500 !important;
-    color: #495057 !important;
 }
 
 /* ── Dataframe ── */
 .stDataFrame {
-    border-radius: 8px;
+    border-radius: 10px;
     overflow: hidden;
+    border: 1px solid var(--border);
 }
 
 /* ── Divider ── */
 hr {
-    border-color: #e9ecef !important;
-    margin: 1rem 0 !important;
+    border-color: var(--border) !important;
+    opacity: 0.6;
+    margin: 1.2rem 0 !important;
 }
 
 /* ── File uploader ── */
-div[data-testid="stFileUploader"] {
-    border-radius: 10px;
-}
 div[data-testid="stFileUploader"] section {
     border-radius: 10px !important;
-    border: 2px dashed #dee2e6 !important;
-    background: #fafbfd !important;
+    border: 1.5px dashed var(--border) !important;
+    transition: border-color 0.2s ease;
+}
+div[data-testid="stFileUploader"] section:hover {
+    border-color: var(--accent) !important;
 }
 
-/* ── Spinner ── */
-.stSpinner > div {
-    border-top-color: #0f3460 !important;
+/* ── Sidebar ── */
+section[data-testid="stSidebar"] {
+    border-right: 1px solid var(--border) !important;
+}
+section[data-testid="stSidebar"] .stSelectbox label,
+section[data-testid="stSidebar"] .stTextInput label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    opacity: 0.7;
 }
 </style>
 """
