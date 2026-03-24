@@ -334,16 +334,14 @@ div[data-testid="stFileUploader"] section:hover {
     border-color: var(--secondary) !important;
 }
 
-/* ── Sidebar toggle / collapse button — catch-all approach ── */
+/* ── Sidebar toggle / collapse button ── */
 [data-testid="collapsedControl"],
 [data-testid="collapsedControl"] button,
 [data-testid="stSidebarCollapsedControl"],
 [data-testid="stSidebarCollapsedControl"] button,
 button[data-testid="stBaseButton-header"],
 button[data-testid="stBaseButton-headerNoPadding"],
-button[kind="header"],
-.st-emotion-cache-iiif1v,
-header button {
+button[kind="header"] {
     background: var(--surface) !important;
     border: 1px solid var(--border) !important;
     border-radius: var(--radius) !important;
@@ -357,24 +355,9 @@ header button {
 [data-testid="stSidebarCollapsedControl"] button svg,
 button[data-testid="stBaseButton-header"] svg,
 button[data-testid="stBaseButton-headerNoPadding"] svg,
-button[kind="header"] svg,
-header button svg {
+button[kind="header"] svg {
     stroke: var(--primary) !important;
     color: var(--primary) !important;
-    fill: var(--primary) !important;
-    opacity: 1 !important;
-}
-/* Nuclear fallback: any small fixed-position button in top-left */
-.stApp > header button,
-.stApp > div:first-child button[kind] {
-    background: var(--surface) !important;
-    border: 1px solid var(--border) !important;
-    box-shadow: var(--shadow-md) !important;
-    opacity: 1 !important;
-}
-.stApp > header button svg,
-.stApp > div:first-child button[kind] svg {
-    stroke: var(--primary) !important;
     fill: var(--primary) !important;
     opacity: 1 !important;
 }
