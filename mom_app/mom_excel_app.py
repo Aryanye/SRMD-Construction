@@ -334,21 +334,31 @@ div[data-testid="stFileUploader"] section:hover {
     border-color: var(--secondary) !important;
 }
 
-/* ── Sidebar toggle button ── */
+/* ── Sidebar toggle / collapse button ── */
 button[data-testid="stBaseButton-header"],
 button[data-testid="stBaseButton-headerNoPadding"],
-button[kind="header"] {
+button[kind="header"],
+button[data-testid="collapsedControl"],
+div[data-testid="collapsedControl"] > button,
+div[data-testid="collapsedControl"],
+.stAppViewBlockContainer button[kind="header"] {
     background: var(--surface) !important;
     border: 1px solid var(--border) !important;
     border-radius: var(--radius) !important;
     box-shadow: var(--shadow-sm) !important;
-    color: var(--text-secondary) !important;
+    color: var(--primary) !important;
+    opacity: 1 !important;
 }
 button[data-testid="stBaseButton-header"] svg,
 button[data-testid="stBaseButton-headerNoPadding"] svg,
-button[kind="header"] svg {
-    stroke: var(--text-secondary) !important;
-    color: var(--text-secondary) !important;
+button[kind="header"] svg,
+button[data-testid="collapsedControl"] svg,
+div[data-testid="collapsedControl"] svg,
+div[data-testid="collapsedControl"] > button svg {
+    stroke: var(--primary) !important;
+    color: var(--primary) !important;
+    fill: var(--primary) !important;
+    opacity: 1 !important;
 }
 
 /* ── Sidebar ── */
