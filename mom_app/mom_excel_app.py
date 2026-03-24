@@ -40,6 +40,193 @@ MIDDLE_DISCUSSION_TEMPLATE_ROW = 27
 ATTENDEE_START_ROW = 10
 ATTENDEE_ROW_COUNT = 6
 
+CUSTOM_CSS = """
+<style>
+/* ── Font ── */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+html, body, [class*="css"] {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
+}
+
+/* ── Page background ── */
+.stApp {
+    background: #f8f9fc;
+}
+
+/* ── Hide default header/footer ── */
+#MainMenu, header[data-testid="stHeader"], footer {visibility: hidden;}
+
+/* ── Branded header ── */
+.app-header {
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    padding: 1.8rem 2.2rem;
+    border-radius: 0 0 16px 16px;
+    margin: -1rem -1rem 1.5rem -1rem;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.12);
+}
+.app-header h1 {
+    color: #ffffff;
+    font-size: 1.65rem;
+    font-weight: 700;
+    margin: 0;
+    letter-spacing: -0.3px;
+}
+.app-header p {
+    color: rgba(255,255,255,0.65);
+    font-size: 0.88rem;
+    margin: 0.35rem 0 0 0;
+    font-weight: 300;
+}
+
+/* ── Section headers ── */
+.section-header {
+    font-size: 0.82rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: #6c757d;
+    margin-bottom: 0.6rem;
+    padding-bottom: 0.4rem;
+    border-bottom: 2px solid #e9ecef;
+}
+
+/* ── Card containers ── */
+div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlock"] {
+    background: #ffffff;
+    border: 1px solid #e9ecef;
+    border-radius: 12px;
+    padding: 1.2rem;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+}
+
+/* ── Sidebar ── */
+section[data-testid="stSidebar"] {
+    background: #1a1a2e !important;
+}
+section[data-testid="stSidebar"] * {
+    color: #e0e0e0 !important;
+}
+section[data-testid="stSidebar"] .stSelectbox label,
+section[data-testid="stSidebar"] .stTextInput label {
+    color: rgba(255,255,255,0.7) !important;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p {
+    font-size: 0.85rem;
+}
+
+/* ── Inputs ── */
+.stTextInput input, .stTextArea textarea, .stSelectbox > div > div {
+    border-radius: 8px !important;
+    border: 1px solid #dee2e6 !important;
+    font-size: 0.9rem !important;
+    transition: border-color 0.2s ease;
+}
+.stTextInput input:focus, .stTextArea textarea:focus {
+    border-color: #0f3460 !important;
+    box-shadow: 0 0 0 2px rgba(15,52,96,0.1) !important;
+}
+
+/* ── Primary button ── */
+.stButton > button[kind="primary"],
+button[data-testid="stBaseButton-primary"] {
+    background: linear-gradient(135deg, #0f3460, #1a1a2e) !important;
+    border: none !important;
+    border-radius: 8px !important;
+    padding: 0.6rem 1.5rem !important;
+    font-weight: 600 !important;
+    font-size: 0.9rem !important;
+    letter-spacing: 0.2px !important;
+    box-shadow: 0 2px 8px rgba(15,52,96,0.25) !important;
+    transition: all 0.25s ease !important;
+}
+button[data-testid="stBaseButton-primary"]:hover {
+    box-shadow: 0 4px 16px rgba(15,52,96,0.35) !important;
+    transform: translateY(-1px) !important;
+}
+
+/* ── Secondary/download buttons ── */
+.stDownloadButton > button,
+button[data-testid="stBaseButton-secondary"] {
+    border-radius: 8px !important;
+    border: 1.5px solid #dee2e6 !important;
+    background: #ffffff !important;
+    color: #1a1a2e !important;
+    font-weight: 500 !important;
+    font-size: 0.85rem !important;
+    transition: all 0.2s ease !important;
+}
+.stDownloadButton > button:hover,
+button[data-testid="stBaseButton-secondary"]:hover {
+    border-color: #0f3460 !important;
+    color: #0f3460 !important;
+    background: #f0f4ff !important;
+}
+
+/* ── Tabs ── */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 0;
+    border-bottom: 2px solid #e9ecef;
+}
+.stTabs [data-baseweb="tab"] {
+    font-weight: 500;
+    font-size: 0.88rem;
+    padding: 0.7rem 1.2rem;
+    border-radius: 8px 8px 0 0;
+    color: #6c757d;
+}
+.stTabs [aria-selected="true"] {
+    color: #0f3460 !important;
+    border-bottom: 2.5px solid #0f3460;
+    font-weight: 600;
+}
+
+/* ── Alerts ── */
+div[data-testid="stAlert"] {
+    border-radius: 8px !important;
+    font-size: 0.88rem;
+    border-left-width: 4px !important;
+}
+
+/* ── Expander ── */
+.streamlit-expanderHeader {
+    font-size: 0.85rem !important;
+    font-weight: 500 !important;
+    color: #495057 !important;
+}
+
+/* ── Dataframe ── */
+.stDataFrame {
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+/* ── Divider ── */
+hr {
+    border-color: #e9ecef !important;
+    margin: 1rem 0 !important;
+}
+
+/* ── File uploader ── */
+div[data-testid="stFileUploader"] {
+    border-radius: 10px;
+}
+div[data-testid="stFileUploader"] section {
+    border-radius: 10px !important;
+    border: 2px dashed #dee2e6 !important;
+    background: #fafbfd !important;
+}
+
+/* ── Spinner ── */
+.stSpinner > div {
+    border-top-color: #0f3460 !important;
+}
+</style>
+"""
+
 SYSTEM_PROMPT = """
 You convert raw site-visit meeting notes into a structured Minutes of Meeting record.
 
@@ -1272,29 +1459,30 @@ def push_mom_to_zoho(
 
 def run_app() -> None:
     st.set_page_config(page_title=APP_TITLE, layout="wide")
-    st.title(APP_TITLE)
-    st.caption(
-        "Paste your site-visit meeting notes, confirm the basic project details, and download an Excel MOM "
-        "that follows your SRMD template format."
+    st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+
+    # ── Branded header ──
+    st.markdown(
+        '<div class="app-header">'
+        "<h1>SRMD MOM Generator</h1>"
+        "<p>Paste site-visit notes, confirm project details, and generate a formatted Minutes of Meeting.</p>"
+        "</div>",
+        unsafe_allow_html=True,
     )
 
     with st.sidebar:
-        st.header("AI Settings")
+        st.markdown("#### AI Configuration")
         api_key = get_api_key()
         model = st.selectbox("Model", MODEL_OPTIONS, index=MODEL_OPTIONS.index(DEFAULT_MODEL))
         if api_key:
-            st.success("OpenAI API key detected from app secrets/environment.")
+            st.markdown("API key configured")
         else:
-            st.warning("No OpenAI API key found. The app will use its local fallback parser.")
-        st.info(
-            "This app reads the API key from Streamlit Secrets when deployed, or from the local environment when "
-            "running locally. The key is not shown in the app UI."
-        )
+            st.warning("No API key found — fallback parser active.")
 
-    left_col, right_col = st.columns([1, 1.2])
+    left_col, right_col = st.columns([1, 1.2], gap="large")
 
     with left_col:
-        st.subheader("Meeting Inputs")
+        st.markdown('<div class="section-header">Meeting Details</div>', unsafe_allow_html=True)
         existing_mom_upload = st.file_uploader(
             "Upload existing MOM Excel (optional)",
             type=["xlsx"],
@@ -1402,7 +1590,7 @@ def run_app() -> None:
             )
 
     with right_col:
-        st.subheader("Meeting Notes")
+        st.markdown('<div class="section-header">Meeting Notes</div>', unsafe_allow_html=True)
         meeting_notes = st.text_area(
             "Paste the raw minutes / site visit notes here",
             key="meeting_notes_input",
@@ -1410,9 +1598,14 @@ def run_app() -> None:
             height=420,
         )
 
+    st.markdown("")  # spacing
     template_ready = os.path.exists(DEFAULT_TEMPLATE_PATH)
     generate_disabled = not meeting_notes.strip() or not template_ready
-    generate_clicked = st.button("Generate Excel MOM", type="primary", disabled=generate_disabled)
+    gen_col1, gen_col2, gen_col3 = st.columns([1, 1, 1])
+    with gen_col2:
+        generate_clicked = st.button(
+            "Generate MOM", type="primary", disabled=generate_disabled, use_container_width=True
+        )
 
     if not template_ready:
         st.warning(
@@ -1513,19 +1706,21 @@ def run_app() -> None:
         excel_tab, pdf_tab, email_tab = st.tabs(["Excel Preview", "PDF Preview", "Email Draft"])
 
         with excel_tab:
-            st.subheader("Structured Preview")
-            st.write(f"**Project:** {_r.project_name}")
-            st.write(f"**Meeting:** {_r.meeting_title}")
-            if _r.mom_number:
-                st.write(f"**MOM Ref:** {_r.mom_number}")
-            st.write(f"**Date:** {_r.meeting_date}")
-            st.write(f"**Place:** {_r.place}")
-            if _r.next_meeting_date or _r.next_meeting_place:
-                next_info = " — ".join(filter(None, [_r.next_meeting_date, _r.next_meeting_place]))
-                st.write(f"**Next Meeting:** {next_info}")
-            st.write("**Attendees:**")
-            for attendee in _r.attendees:
-                st.write(f"- {attendee}")
+            st.markdown('<div class="section-header">Structured Preview</div>', unsafe_allow_html=True)
+            meta_col1, meta_col2 = st.columns(2)
+            with meta_col1:
+                st.markdown(f"**Project:** {_r.project_name}")
+                st.markdown(f"**Meeting:** {_r.meeting_title}")
+                if _r.mom_number:
+                    st.markdown(f"**MOM Ref:** {_r.mom_number}")
+            with meta_col2:
+                st.markdown(f"**Date:** {_r.meeting_date}")
+                st.markdown(f"**Place:** {_r.place}")
+                if _r.next_meeting_date or _r.next_meeting_place:
+                    next_info = " — ".join(filter(None, [_r.next_meeting_date, _r.next_meeting_place]))
+                    st.markdown(f"**Next Meeting:** {next_info}")
+            with st.expander(f"Attendees ({len(_r.attendees)})"):
+                st.markdown(", ".join(_r.attendees))
             df = pd.DataFrame(preview_rows)
             try:
                 styled_df = df.style.map(
@@ -1536,7 +1731,7 @@ def run_app() -> None:
                 st.dataframe(df, use_container_width=True, hide_index=True)
 
         with pdf_tab:
-            st.subheader("PDF Preview")
+            st.markdown('<div class="section-header">PDF Preview</div>', unsafe_allow_html=True)
             pdf_base64 = base64.b64encode(_pdf).decode("ascii")
             st.markdown(
                 (
@@ -1547,7 +1742,7 @@ def run_app() -> None:
             )
 
         with email_tab:
-            st.subheader("Email Draft")
+            st.markdown('<div class="section-header">Email Draft</div>', unsafe_allow_html=True)
             st.caption("Copy and paste this into your email client. Edit as needed before sending.")
             st.code(build_email_draft(_r), language="")
 
@@ -1556,19 +1751,23 @@ def run_app() -> None:
         pdf_name = sanitize_filename(f"{_r.project_name}_{_r.meeting_date}_MOM{mom_suffix}") + ".pdf"
 
         st.divider()
-        dl_col, zoho_col = st.columns([1, 1])
-        with dl_col:
+        st.markdown('<div class="section-header">Actions</div>', unsafe_allow_html=True)
+        dl_col1, dl_col2, zoho_col = st.columns([1, 1, 1])
+        with dl_col1:
             st.download_button(
-                label="Download Excel File",
+                label="Download Excel",
                 data=_wb,
                 file_name=output_name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
             )
+        with dl_col2:
             st.download_button(
-                label="Download PDF File",
+                label="Download PDF",
                 data=_pdf,
                 file_name=pdf_name,
                 mime="application/pdf",
+                use_container_width=True,
             )
 
         with zoho_col:
