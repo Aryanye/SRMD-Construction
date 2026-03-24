@@ -334,6 +334,23 @@ div[data-testid="stFileUploader"] section:hover {
     border-color: var(--secondary) !important;
 }
 
+/* ── Sidebar toggle button ── */
+button[data-testid="stBaseButton-header"],
+button[data-testid="stBaseButton-headerNoPadding"],
+button[kind="header"] {
+    background: var(--surface) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: var(--radius) !important;
+    box-shadow: var(--shadow-sm) !important;
+    color: var(--text-secondary) !important;
+}
+button[data-testid="stBaseButton-header"] svg,
+button[data-testid="stBaseButton-headerNoPadding"] svg,
+button[kind="header"] svg {
+    stroke: var(--text-secondary) !important;
+    color: var(--text-secondary) !important;
+}
+
 /* ── Sidebar ── */
 section[data-testid="stSidebar"] {
     background: var(--surface) !important;
