@@ -75,9 +75,10 @@ h1, h2, h3, h4, h5, h6 {
     font-family: 'Manrope', 'Inter', sans-serif !important;
 }
 
-/* ── Light page background ── */
+/* ── Page background — subtle gradient ── */
 .stApp {
-    background: var(--bg) !important;
+    background: linear-gradient(160deg, #F7F8FA 0%, #EEF1F5 30%, #E8ECF4 60%, #F0F2F8 100%) !important;
+    background-attachment: fixed !important;
 }
 
 /* ── Hide default chrome ── */
